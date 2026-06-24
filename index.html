@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Axiom Memecoin Scanner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◎</text></svg>" />
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR NAVIGATIE
+     ============================================================ -->
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-glyph">◎</span>
+      <div class="logo-text">
+        <span class="logo-name">Axiom Scanner</span>
+        <span class="logo-sub">Solana Memecoin Bot</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item nav-item--active" data-page="dashboard">
+        <span class="nav-icon">📊</span> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-page="scanner">
+        <span class="nav-icon">🔍</span> Scanner
+      </a>
+      <a href="#" class="nav-item" data-page="signals">
+        <span class="nav-icon">⚡</span> Signalen
+      </a>
+      <a href="#" class="nav-item" data-page="positions">
+        <span class="nav-icon">📈</span> Posities
+      </a>
+      <a href="#" class="nav-item" data-page="backtest">
+        <span class="nav-icon">🧪</span> Backtest
+      </a>
+      <a href="#" class="nav-item" data-page="settings">
+        <span class="nav-icon">⚙️</span> Instellingen
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <!-- Wallet connect knop -->
+      <div class="wallet-panel" id="wallet-panel">
+        <div class="wallet-status" id="wallet-status">
+          <span class="wallet-dot wallet-dot--off" id="wallet-dot"></span>
+          <span id="wallet-label">Niet verbonden</span>
+        </div>
+        <button class="btn btn--wallet" id="btn-connect-wallet">
+          👻 Verbind Phantom
+        </button>
+      </div>
+
+      <!-- Mode toggle -->
+      <div class="mode-row">
+        <span class="mode-txt">Modus:</span>
+        <div class="mode-toggle" id="mode-toggle">
+          <button class="mode-btn mode-btn--active" id="btn-paper">PAPER</button>
+          <button class="mode-btn" id="btn-live">LIVE ⚠️</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================================================
+       HOOFD CONTENT AREA
+       ============================================================ -->
+  <main class="main-content" id="main-content">
+
+    <!-- TOAST NOTIFICATIES -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- PAGES (één zichtbaar tegelijk) -->
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page page--active" id="page-dashboard">
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <div class="scanner-control-row">
+          <div class="pulse-dot" id="scan-pulse"></div>
+          <span id="scan-status-text">Gestopt</span>
+          <button class="btn btn--sm btn--ghost" id="btn-scan-once" title="Eenmalige scan">↻ Scan</button>
+          <button class="btn btn--primary" id="btn-toggle-scanner">▶ Start Scanner</button>
+        </div>
+      </div>
+
+      <!-- KPI kaarten -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Balans</div>
+          <div class="kpi-value kpi-value--accent" id="kpi-balance">0.1000 SOL</div>
+          <div class="kpi-sub" id="kpi-balance-usd">≈ $0.00</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Totaal P&amp;L</div>
+          <div class="kpi-value" id="kpi-pnl">+0.00%</div>
+          <div class="kpi-sub" id="kpi-pnl-sol">0.0000 SOL</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Win Rate</div>
+          <div class="kpi-value" id="kpi-winrate">0%</div>
+          <div class="kpi-sub" id="kpi-trades-count">0 trades</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Open Posities</div>
+          <div class="kpi-value" id="kpi-open">0</div>
+          <div class="kpi-sub" id="kpi-scanned">0 gescand</div>
+        </div>
+      </div>
+
+      <!-- Twee kolommen -->
+      <div class="two-col">
+        <!-- Recente signalen -->
+        <div class="panel">
+          <div class="panel-header">
+            <span>Recente Signalen</span>
+            <span class="badge" id="signals-badge">0</span>
+          </div>
+          <div class="signal-feed" id="dashboard-signals">
+            <div class="empty">Scanner nog niet gestart...</div>
+          </div>
+        </div>
+
+        <!-- Live log -->
+        <div class="panel">
+          <div class="panel-header">
+            <span>Activity Log</span>
+            <button class="btn btn--xs btn--ghost" id="btn-clear-log-dash">Wis</button>
+          </div>
+          <div class="log-feed" id="dashboard-log">
+            <div class="log-entry log--info">
+              <span class="log-time">--:--:--</span>
+              <span>Welkom bij Axiom Scanner v1.0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SCANNER ── -->
+    <div class="page" id="page-scanner">
+      <div class="page-header">
+        <h1>Token Scanner</h1>
+        <span class="badge badge--info" id="scanner-total-badge">0 tokens</span>
+      </div>
+      <div class="filter-bar">
+        <input class="input-search" type="text" id="scanner-search" placeholder="Zoek op symbool..." />
+        <select class="select-sm" id="scanner-sort">
+          <option value="score">Score ↓</option>
+          <option value="volume">Volume ↓</option>
+          <option value="age">Nieuwste</option>
+          <option value="liquidity">Liquiditeit ↓</option>
+        </select>
+        <select class="select-sm" id="scanner-filter-action">
+          <option value="all">Alle acties</option>
+          <option value="BUY">Koop</option>
+          <option value="WATCH">Watch</option>
+          <option value="SKIP">Skip</option>
+        </select>
+      </div>
+      <div class="token-table-wrap">
+        <table class="token-table" id="scanner-table">
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th>Score</th>
+              <th>Market Cap</th>
+              <th>Liquiditeit</th>
+              <th>Volume 24u</th>
+              <th>Holders</th>
+              <th>Top Holder</th>
+              <th>Buy/Sell</th>
+              <th>Prijs Δ 1u</th>
+              <th>Actie</th>
+            </tr>
+          </thead>
+          <tbody id="scanner-tbody">
+            <tr><td colspan="10" class="empty">Start de scanner om tokens te laden...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── SIGNALEN ── -->
+    <div class="page" id="page-signals">
+      <div class="page-header">
+        <h1>Handelssignalen</h1>
+      </div>
+      <div class="filter-bar">
+        <select class="select-sm" id="sig-filter">
+          <option value="all">Alle</option>
+          <option value="BUY">Koop</option>
+          <option value="WATCH">Watch</option>
+          <option value="SKIP">Skip</option>
+        </select>
+        <label class="checkbox-row">
+          <input type="checkbox" id="sig-only-safe" checked />
+          Alleen veilig
+        </label>
+      </div>
+      <div class="signal-cards" id="signal-cards">
+        <div class="empty">Nog geen signalen gegenereerd...</div>
+      </div>
+    </div>
+
+    <!-- ── POSITIES ── -->
+    <div class="page" id="page-positions">
+      <div class="page-header">
+        <h1>Posities</h1>
+        <div class="header-stats">
+          <span>Open: <strong id="pos-open-count">0</strong></span>
+          <span>Gesloten: <strong id="pos-closed-count">0</strong></span>
+        </div>
+      </div>
+
+      <h3 class="section-title">Open Posities</h3>
+      <div class="positions-grid" id="open-positions-grid">
+        <div class="empty">Geen open posities</div>
+      </div>
+
+      <h3 class="section-title" style="margin-top:28px">Trade Geschiedenis</h3>
+      <div class="token-table-wrap">
+        <table class="token-table" id="history-table">
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th>Modus</th>
+              <th>Instap</th>
+              <th>Uitstap</th>
+              <th>P&amp;L %</th>
+              <th>P&amp;L SOL</th>
+              <th>Status</th>
+              <th>Tijd</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr><td colspan="8" class="empty">Nog geen gesloten trades...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── BACKTEST ── -->
+    <div class="page" id="page-backtest">
+      <div class="page-header">
+        <h1>Backtesting</h1>
+        <span class="badge badge--info">Gesimuleerde data</span>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header"><span>Backtest Configuratie</span></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Begin Datum</label>
+              <input type="date" id="bt-start" class="input-field" />
+            </div>
+            <div class="form-group">
+              <label>Eind Datum</label>
+              <input type="date" id="bt-end" class="input-field" />
+            </div>
+            <div class="form-group">
+              <label>Startkapitaal (SOL)</label>
+              <input type="number" id="bt-capital" class="input-field" value="0.1" step="0.01" min="0.01" />
+            </div>
+            <div class="form-group">
+              <label>Min. Score</label>
+              <input type="number" id="bt-min-score" class="input-field" value="70" min="0" max="100" />
+            </div>
+            <div class="form-group">
+              <label>Stop Loss %</label>
+              <input type="number" id="bt-sl" class="input-field" value="15" min="1" max="50" />
+            </div>
+            <div class="form-group">
+              <label>Take Profit 1 %</label>
+              <input type="number" id="bt-tp1" class="input-field" value="30" min="5" />
+            </div>
+            <div class="form-group">
+              <label>Take Profit 2 %</label>
+              <input type="number" id="bt-tp2" class="input-field" value="80" min="10" />
+            </div>
+            <div class="form-group">
+              <label>Bedrag per Trade (SOL)</label>
+              <input type="number" id="bt-amount" class="input-field" value="0.01" step="0.001" min="0.001" />
+            </div>
+          </div>
+          <button class="btn btn--primary btn--full" id="btn-run-backtest">▶ Backtest Uitvoeren</button>
+        </div>
+
+        <div class="panel" id="bt-results-panel">
+          <div class="panel-header"><span>Resultaten</span></div>
+          <div id="bt-results-placeholder" class="empty">Voer eerst een backtest uit...</div>
+          <div id="bt-results" style="display:none">
+            <div class="kpi-grid kpi-grid--sm">
+              <div class="kpi-card"><div class="kpi-label">Totaal Rendement</div><div class="kpi-value" id="bt-r-return">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Win Rate</div><div class="kpi-value" id="bt-r-wr">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Sharpe Ratio</div><div class="kpi-value" id="bt-r-sharpe">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Max Drawdown</div><div class="kpi-value" id="bt-r-dd">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Profit Factor</div><div class="kpi-value" id="bt-r-pf">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Totaal Trades</div><div class="kpi-value" id="bt-r-trades">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Gem. Winst</div><div class="kpi-value kpi-value--green" id="bt-r-avgwin">-</div></div>
+              <div class="kpi-card"><div class="kpi-label">Gem. Verlies</div><div class="kpi-value kpi-value--red" id="bt-r-avgloss">-</div></div>
+            </div>
+            <div class="equity-chart-wrap">
+              <div class="panel-header" style="margin-top:16px"><span>Equity Curve</span></div>
+              <canvas id="equity-chart" height="120"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── INSTELLINGEN ── -->
+    <div class="page" id="page-settings">
+      <div class="page-header">
+        <h1>Instellingen</h1>
+        <button class="btn btn--primary" id="btn-save-settings">💾 Opslaan</button>
+      </div>
+
+      <div class="settings-grid">
+        <!-- Trading -->
+        <div class="panel">
+          <div class="panel-header"><span>💰 Trading Parameters</span></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Startkapitaal (SOL)</label>
+              <input type="number" id="s-capital" class="input-field" value="0.1" step="0.01" />
+            </div>
+            <div class="form-group">
+              <label>Bedrag per Trade (SOL)</label>
+              <input type="number" id="s-amount" class="input-field" value="0.01" step="0.001" />
+            </div>
+            <div class="form-group">
+              <label>Max Open Posities</label>
+              <input type="number" id="s-max-pos" class="input-field" value="5" min="1" max="20" />
+            </div>
+            <div class="form-group">
+              <label>Scan Interval (seconden)</label>
+              <input type="number" id="s-interval" class="input-field" value="30" min="10" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Risk -->
+        <div class="panel">
+          <div class="panel-header"><span>🛡️ Risk Management</span></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Stop Loss %</label>
+              <input type="number" id="s-sl" class="input-field" value="15" min="1" max="50" />
+            </div>
+            <div class="form-group">
+              <label>Take Profit 1 % (50% verkoop)</label>
+              <input type="number" id="s-tp1" class="input-field" value="30" min="5" />
+            </div>
+            <div class="form-group">
+              <label>Take Profit 2 % (rest)</label>
+              <input type="number" id="s-tp2" class="input-field" value="80" min="10" />
+            </div>
+            <div class="form-group">
+              <label>Minimale Score (0-100)</label>
+              <input type="number" id="s-min-score" class="input-field" value="70" min="0" max="100" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="panel">
+          <div class="panel-header"><span>🔍 Scanner Filters</span></div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Min. Liquiditeit (USD)</label>
+              <input type="number" id="s-min-liq" class="input-field" value="10000" step="1000" />
+            </div>
+            <div class="form-group">
+              <label>Min. Holders</label>
+              <input type="number" id="s-min-holders" class="input-field" value="50" />
+            </div>
+            <div class="form-group">
+              <label>Max Top Holder %</label>
+              <input type="number" id="s-max-holder-pct" class="input-field" value="20" min="1" max="100" />
+            </div>
+            <div class="form-group">
+              <label>Min. Volume 24u (USD)</label>
+              <input type="number" id="s-min-vol" class="input-field" value="5000" step="1000" />
+            </div>
+            <div class="form-group">
+              <label>Min. Leeftijd (minuten)</label>
+              <input type="number" id="s-min-age" class="input-field" value="5" />
+            </div>
+            <div class="form-group">
+              <label>Max. Leeftijd (minuten)</label>
+              <input type="number" id="s-max-age" class="input-field" value="1440" />
+            </div>
+          </div>
+        </div>
+
+        <!-- API Keys -->
+        <div class="panel">
+          <div class="panel-header"><span>🔑 API Sleutels</span></div>
+          <div class="form-grid form-grid--full">
+            <div class="form-group">
+              <label>Helius API Key <a href="https://helius.dev" target="_blank" class="link">helius.dev</a></label>
+              <input type="password" id="s-helius" class="input-field" placeholder="Optioneel maar aanbevolen" autocomplete="off" />
+            </div>
+            <div class="form-group">
+              <label>Birdeye API Key <a href="https://birdeye.so" target="_blank" class="link">birdeye.so</a></label>
+              <input type="password" id="s-birdeye" class="input-field" placeholder="Optioneel - voor holder data" autocomplete="off" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Waarschuwing -->
+        <div class="panel panel--warning">
+          <div class="panel-header"><span>⚠️ Risicowaarschuwing</span></div>
+          <ul class="warning-list">
+            <li>Memecoin trading is <strong>extreem risicovol</strong> — u kunt alles verliezen</li>
+            <li>Begin altijd met <strong>paper trading</strong> om de strategie te valideren</li>
+            <li>Investeer nooit meer dan u bereid bent te verliezen</li>
+            <li>Private keys worden <strong>nooit</strong> opgeslagen — alleen publieke adressen</li>
+            <li>Dit is geen financieel advies</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Scripts -->
+<script src="js/storage.js"></script>
+<script src="js/safetyAnalyzer.js"></script>
+<script src="js/scoreCalculator.js"></script>
+<script src="js/tokenFetcher.js"></script>
+<script src="js/tradeManager.js"></script>
+<script src="js/backtestEngine.js"></script>
+<script src="js/wallet.js"></script>
+<script src="js/scanner.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
