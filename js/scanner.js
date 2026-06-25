@@ -1,15 +1,17 @@
 /* ============================================================
-   SCANNER.JS - Scan loop die trades ECHT uitvoert
+   SCANNER.JS - Robuuste scan loop
+   Fix: betere error handling, duidelijke logging, 
+   garanteert trade uitvoering bij match
    ============================================================ */
 'use strict';
 
 const Scanner = (() => {
 
-  let _running  = false;
-  let _timer    = null;
-  let _scanning = false;
-  let _scanCount= 0;
-  let _priceMap = new Map();
+  let _running   = false;
+  let _timer     = null;
+  let _scanning  = false;
+  let _scanCount = 0;
+  let _priceMap  = new Map();
 
   let _onSignal    = null;
   let _onStatus    = null;
@@ -21,21 +23,30 @@ const Scanner = (() => {
     _onNewTokens = cb.onNewTokens || null;
   }
 
+  // ── START ─────────────────────────────────────────────────
   function start() {
-    if (_running) return;
+    if (_running) {
+      Storage.addLog('warning', 'Scanner al actief');
+      return;
+    }
     _running = true;
     _notify();
-    Storage.addLog('success', '🟢 Scanner gestart — zoekt koopkansen...');
-    _runCycle();
+    Storage.addLog('success', '🟢 Scanner gestart — eerste scan over enkele seconden...');
+
+    // Directe eerste scan na 1 seconde (geeft UI tijd te updaten)
+    setTimeout(() => { if (_running) _runCycle(); }, 1000);
+
     const s = Storage.getSettings();
-    _timer = setInterval(() => { if (!_scanning) _runCycle(); }, s.scanIntervalSeconds * 1000);
+    _timer = setInterval(() => {
+      if (_running && !_scanning) _runCycle();
+    }, s.scanIntervalSeconds * 1000);
   }
 
+  // ── STOP ──────────────────────────────────────────────────
   function stop() {
-    if (!_running) return;
     _running = false;
-    clearInterval(_timer);
-    _timer = null;
+    if (_timer) { clearInterval(_timer); _timer = null; }
+    _scanning = false;
     Storage.addLog('info', '⏹ Scanner gestopt');
     _notify();
   }
@@ -44,12 +55,14 @@ const Scanner = (() => {
 
   function scanOnce() {
     if (_scanning) {
-      Storage.addLog('info', 'Scan al bezig, wacht...');
+      Storage.addLog('info', '⏳ Scan al bezig, even geduld...');
       return;
     }
+    Storage.addLog('info', '🔍 Handmatige scan gestart...');
     _runCycle();
   }
 
+  // ── HOOFD SCAN CYCLUS ─────────────────────────────────────
   async function _runCycle() {
     if (_scanning) return;
     _scanning = true;
@@ -59,13 +72,33 @@ const Scanner = (() => {
     const t0       = Date.now();
 
     try {
-      // 1. Controleer ook open posities met bekende prijzen
+      // STAP 1: Controleer bestaande posities met bekende prijzen
       if (_priceMap.size > 0) {
-        await TradeManager.checkPositions(_priceMap);
+        try {
+          await TradeManager.checkPositions(_priceMap);
+        } catch(e) {
+          Storage.addLog('warning', 'Positiecheck fout: ' + e.message);
+        }
       }
 
-      // 2. Haal nieuwe tokens op
-      const tokens = await TokenFetcher.scanAll();
+      // STAP 2: Haal verse tokens op van DexScreener
+      let tokens = [];
+      try {
+        tokens = await TokenFetcher.scanAll();
+      } catch(e) {
+        Storage.addLog('error', 'TokenFetcher fout: ' + e.message);
+        _scanning = false;
+        _notify();
+        return;
+      }
+
+      if (!tokens.length) {
+        Storage.addLog('warning', '⚠️ Geen tokens ontvangen — DexScreener tijdelijk traag? Volgende scan over ' + settings.scanIntervalSeconds + 's');
+        _scanning = false;
+        _notify();
+        return;
+      }
+
       _scanCount += tokens.length;
 
       // Update prijsmap
@@ -73,78 +106,119 @@ const Scanner = (() => {
         if (t.priceUsd > 0) _priceMap.set(t.address, t.priceUsd);
       }
 
-      // 3. Analyseer elk token en genereer signalen
-      const signals  = [];
+      // STAP 3: Analyseer elk token
+      const signals    = [];
       const buySignals = [];
+      let   skipped    = 0;
 
       for (const token of tokens) {
-        // ── Basisfilters (goedkoop, geen API) ──
-        if (token.priceUsd        <= 0)                          continue;
-        if (token.liquidity        < settings.minLiquidityUsd)   continue;
-        if (token.volume24h        < settings.minVolume24h)      continue;
-        if (token.marketCap        < settings.minMarketCap)      continue;
-        if (token.marketCap        > settings.maxMarketCap)      continue;
-        if (token.ageMinutes       < settings.minAgeMinutes)     continue;
-        if (token.ageMinutes       > settings.maxAgeMinutes)     continue;
-        if (token.largestHolderPercent > settings.maxTopHolderPercent) continue;
+        // Snelle pre-filter (geen API nodig)
+        if (!token.priceUsd || token.priceUsd <= 0)               { skipped++; continue; }
+        if (token.liquidity        < settings.minLiquidityUsd)    { skipped++; continue; }
+        if (token.volume24h        < settings.minVolume24h)       { skipped++; continue; }
+        if (token.marketCap > 0 && token.marketCap < settings.minMarketCap)  { skipped++; continue; }
+        if (token.marketCap > 0 && token.marketCap > settings.maxMarketCap)  { skipped++; continue; }
+        if (token.ageMinutes > 0  && token.ageMinutes < settings.minAgeMinutes) { skipped++; continue; }
+        if (token.ageMinutes > 0  && token.ageMinutes > settings.maxAgeMinutes) { skipped++; continue; }
 
-        const safety = SafetyAnalyzer.analyze(token, settings);
-        const score  = ScoreCalculator.calculate(token, safety);
+        // Veiligheidsanalyse
+        let safety;
+        try {
+          safety = SafetyAnalyzer.analyze(token, settings);
+        } catch(e) {
+          console.warn('[Scanner] SafetyAnalyzer fout voor', token.symbol, e);
+          continue;
+        }
+
+        // Score berekening
+        let score;
+        try {
+          score = ScoreCalculator.calculate(token, safety);
+        } catch(e) {
+          console.warn('[Scanner] ScoreCalculator fout voor', token.symbol, e);
+          continue;
+        }
 
         const signal = {
-          id:             'sig_' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+          id:             'sig_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
           timestamp:      Date.now(),
           tokenData:      token,
           safetyAnalysis: safety,
           scoreResult:    score,
           action:         score.recommendation,
-          reason:         _reason(score, safety),
+          reason:         _buildReason(score, safety),
         };
 
         Storage.addSignal(signal);
         signals.push(signal);
 
-        // 4. KOOP als score hoog genoeg EN veilig
-        if (score.recommendation === 'BUY' && score.total >= settings.minScore && safety.isSafe) {
+        // STAP 4: Voer trade uit als criterium gehaald
+        if (
+          score.recommendation === 'BUY' &&
+          score.total >= settings.minScore &&
+          safety.isSafe
+        ) {
           buySignals.push(signal);
 
           if (settings.tradingMode === 'paper') {
-            // Paper trade uitvoeren
-            const trade = await TradeManager.openPaperTrade(signal, settings);
-            if (trade && _onSignal) _onSignal(signal, trade);
+            try {
+              const trade = await TradeManager.openPaperTrade(signal, settings);
+              if (trade) {
+                Storage.addLog('success',
+                  `✅ PAPER TRADE GEOPEND: ${token.symbol} | ` +
+                  `Score: ${score.total} | ` +
+                  `$${_fmtP(token.priceUsd)} | ` +
+                  `${settings.tradeAmount} SOL`
+                );
+                if (_onSignal) _onSignal(signal, trade);
+              }
+            } catch(e) {
+              Storage.addLog('error', 'Trade open fout: ' + e.message);
+            }
           } else {
             // Live trading
-            if (Wallet.isConnected()) {
+            if (typeof Wallet !== 'undefined' && Wallet.isConnected()) {
               Storage.addLog('info',
-                `🔴 LIVE signaal: ${token.symbol} (score ${score.total}) — ` +
-                `open Axiom.trade voor handmatige bevestiging`
+                `🔴 LIVE SIGNAAL: ${token.symbol} score ${score.total} — ` +
+                `open Axiom voor uitvoering`
               );
-              window.open(`https://axiom.trade/meme/${token.pairAddress}`, '_blank');
+              // Open Axiom.trade op dit token
+              try {
+                window.open(`https://axiom.trade/meme/${token.pairAddress}`, '_blank');
+              } catch(e) { /* popup geblokkeerd */ }
             } else {
-              Storage.addLog('warning', `Live signaal ${token.symbol} maar wallet niet verbonden`);
+              Storage.addLog('warning',
+                `⚠️ Koopsignaal ${token.symbol} (${score.total}) — ` +
+                `verbind wallet voor live trading`
+              );
             }
             if (_onSignal) _onSignal(signal, null);
           }
         }
       }
 
-      // 5. Controleer posities opnieuw met verse prijzen
+      // STAP 5: Nogmaals positiecheck met verse prijzen
       if (_priceMap.size > 0) {
-        await TradeManager.checkPositions(_priceMap);
+        try {
+          await TradeManager.checkPositions(_priceMap);
+        } catch(e) {
+          Storage.addLog('warning', 'Positiecheck 2 fout: ' + e.message);
+        }
       }
 
-      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      const open    = Storage.getOpenTrades().length;
+      const elapsed  = ((Date.now() - t0) / 1000).toFixed(1);
+      const openPos  = Storage.getOpenTrades().length;
       Storage.addLog('info',
-        `✅ Scan: ${tokens.length} tokens | ${buySignals.length} koopsignalen | ` +
-        `${open} open posities | ${elapsed}s`
+        `📊 Scan: ${tokens.length} tokens | ${skipped} gefilterd | ` +
+        `${buySignals.length} koopsignalen | ` +
+        `${openPos} open posities | ${elapsed}s`
       );
 
       if (_onNewTokens) _onNewTokens(tokens, signals);
 
     } catch (err) {
-      Storage.addLog('error', `Scan fout: ${err.message || String(err)}`);
-      console.error('[Scanner]', err);
+      Storage.addLog('error', `❌ Scan mislukt: ${err.message || String(err)}`);
+      console.error('[Scanner] onverwachte fout:', err);
     }
 
     _scanning = false;
@@ -152,24 +226,37 @@ const Scanner = (() => {
   }
 
   function _notify() {
-    if (_onStatus) _onStatus({ isRunning: _running, scannedCount: _scanCount, lastScan: Date.now() });
+    if (_onStatus) _onStatus({
+      isRunning:    _running,
+      scannedCount: _scanCount,
+      lastScan:     Date.now(),
+    });
   }
 
-  function _reason(score, safety) {
+  function _buildReason(score, safety) {
     if (!safety.isSafe) {
-      return 'Onveilig: ' + safety.flags.slice(0,2).map(f =>
+      const flags = safety.flags.slice(0,2).map(f =>
         f.type.replace(/_/g,' ').toLowerCase()
       ).join(', ');
+      return `Onveilig: ${flags}`;
     }
-    if (score.total >= 65) {
+    if (score.total >= 62) {
       return score.breakdown
         .filter(b => b.points > 0)
         .sort((a,b) => b.points - a.points)
-        .slice(0,2)
+        .slice(0, 2)
         .map(b => b.category)
         .join(' + ');
     }
     return `Score ${score.total}/100`;
+  }
+
+  function _fmtP(p) {
+    if (!p) return '0';
+    if (p < 0.000001) return p.toExponential(3);
+    if (p < 0.001)    return p.toFixed(8);
+    if (p < 1)        return p.toFixed(6);
+    return p.toFixed(4);
   }
 
   return { start, stop, isRunning, scanOnce, setCallbacks };

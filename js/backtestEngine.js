@@ -8,14 +8,14 @@ const BacktestEngine = (() => {
 
   function run(config) {
     const settings = Object.assign({}, Storage.getDefaultSettings(), {
-      minScore:             config.minScore    || 65,
+      minScore:             config.minScore    || 62,
       stopLossPercent:      config.sl          || 20,
       takeProfit1Percent:   config.tp1         || 60,
       takeProfit2Percent:   config.tp2         || 200,
-      tradeAmount:          config.tradeAmount  || 0.002,
-      maxOpenPositions:     3,
+      tradeAmount:          config.tradeAmount  || 0.003,
+      maxOpenPositions:     2,
       minLiquidityUsd:      5000,
-      minHolders:           30,
+      minHolders:           25,
       maxTopHolderPercent:  25,
     });
 

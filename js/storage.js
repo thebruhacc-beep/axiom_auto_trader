@@ -35,31 +35,32 @@ const Storage = (() => {
     totalRoundtripPct:0.06,     // ~6% totaal heen+terug (buy+sell fees+slippage)
   };
 
-  // €1 challenge defaults
-  // Bij SOL = $170 → €1 ≈ 0.0058 SOL
-  // Minimale trade zodat fees niet >20% van trade zijn: 0.002 SOL (~€0.34)
-  // Dit betekent: fees ≈ 6% van 0.002 = 0.00012 SOL ($0.02) — acceptabel
+  // 0.01 SOL → 200x challenge
+  // 0.01 SOL ≈ $1.70 bij SOL = $170
+  // Doel: 0.01 SOL groeien naar 2 SOL (200x)
+  // Per trade 0.003 SOL — fees ~6% roundtrip = $0.03 per trade (acceptabel)
   const DEFAULT_SETTINGS = {
     tradingMode:          'paper',
-    startingCapital:      0.006,   // ~€1
-    tradeAmount:          0.002,   // ~€0.34 — minimum voor acceptabele fee ratio
-    maxOpenPositions:     2,       // Max 2 tegelijk bij zo weinig kapitaal
-    stopLossPercent:      20,
-    takeProfit1Percent:   60,      // +60% eerste exit (fees al ingecalculeerd)
-    takeProfit2Percent:   200,     // +200% volledige exit — memecoins x3 is realistisch
-    minScore:             65,
-    minLiquidityUsd:      5000,    // Min $5K liquidity anders te veel slippage
-    minHolders:           30,
+    startingCapital:      0.01,    // $1.70 startkapitaal
+    tradeAmount:          0.003,   // $0.51 per trade — fees ~6% = $0.03
+    maxOpenPositions:     2,       // Max 2 posities tegelijk
+    stopLossPercent:      20,      // -20% SL → netto -26% na fees
+    takeProfit1Percent:   60,      // +60% TP1 50% exit → netto +54%
+    takeProfit2Percent:   200,     // +200% TP2 rest → netto +194%
+    minScore:             62,      // Iets lager voor meer kansen
+    minLiquidityUsd:      5000,    // Min $5K — anders slippage te groot
+    minHolders:           25,
     maxTopHolderPercent:  25,
-    minVolume24h:         3000,
+    minVolume24h:         2000,
     minMarketCap:         3000,
-    maxMarketCap:         3000000,
+    maxMarketCap:         5000000, // Max $5M mcap — early stage
     minAgeMinutes:        3,
-    maxAgeMinutes:        480,
+    maxAgeMinutes:        720,     // Max 12 uur oud
     heliusApiKey:         '',
     birdeyeApiKey:        '',
-    scanIntervalSeconds:  20,
+    scanIntervalSeconds:  25,
   };
+
 
   function _get(key) {
     try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; }
