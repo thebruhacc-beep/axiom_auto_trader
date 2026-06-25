@@ -1,7 +1,8 @@
 /* ============================================================
-   SAFETYANALYZER.JS - Detecteert rug pulls en gevaarlijke tokens
+   SAFETYANALYZER.JS - Veiligheidscontroles
+   Aangepast voor €1 challenge: iets ruimere limieten
+   maar de kritische checks blijven hard
    ============================================================ */
-
 'use strict';
 
 const SafetyAnalyzer = (() => {
@@ -10,114 +11,107 @@ const SafetyAnalyzer = (() => {
     const flags    = [];
     const warnings = [];
 
-    // ── KRITISCH: disqualificerend ────────────────────────
+    // ── HARDE KILLS ───────────────────────────────────────
+    // Deze zijn altijd disqualificerend, ongeacht instellingen
 
     if (token.largestHolderPercent > settings.maxTopHolderPercent) {
       flags.push({
-        type:        'TOP_HOLDER_TOO_HIGH',
-        severity:    token.largestHolderPercent > 40 ? 'critical' : 'high',
-        description: `Grootste holder bezit ${token.largestHolderPercent.toFixed(1)}%`,
-        value:        token.largestHolderPercent,
+        type:     'TOP_HOLDER_TOO_HIGH',
+        severity: token.largestHolderPercent > 40 ? 'critical' : 'high',
+        description: `Grootste holder: ${token.largestHolderPercent.toFixed(1)}% (max ${settings.maxTopHolderPercent}%)`,
+        value: token.largestHolderPercent,
       });
     }
 
-    if (token.topHolderPercent > 50) {
+    if (token.topHolderPercent > 60) {
       flags.push({
-        type:        'WHALE_CONCENTRATION',
-        severity:    token.topHolderPercent > 70 ? 'critical' : 'high',
-        description: `Top-10 holders bezitten ${token.topHolderPercent.toFixed(1)}%`,
-        value:        token.topHolderPercent,
+        type:     'WHALE_CONCENTRATION',
+        severity: token.topHolderPercent > 80 ? 'critical' : 'high',
+        description: `Top-10 bezitten ${token.topHolderPercent.toFixed(1)}%`,
+        value: token.topHolderPercent,
       });
     }
 
     if (token.liquidity < settings.minLiquidityUsd) {
       flags.push({
-        type:        'LOW_LIQUIDITY',
-        severity:    token.liquidity < settings.minLiquidityUsd / 2 ? 'critical' : 'high',
-        description: `Liquiditeit $${_fmt(token.liquidity)} (min $${_fmt(settings.minLiquidityUsd)})`,
-        value:        token.liquidity,
+        type:     'LOW_LIQUIDITY',
+        severity: token.liquidity < settings.minLiquidityUsd * 0.5 ? 'critical' : 'high',
+        description: `Liquiditeit $${_f(token.liquidity)} (min $${_f(settings.minLiquidityUsd)})`,
+        value: token.liquidity,
       });
     }
 
-    if (token.holderCount < settings.minHolders) {
+    // Verdachte honeypot: veel buys maar haast geen sells
+    if (token.buyCount24h > 50 && token.sellCount24h < 3) {
       flags.push({
-        type:        'TOO_FEW_HOLDERS',
-        severity:    token.holderCount < settings.minHolders / 2 ? 'critical' : 'high',
-        description: `Slechts ${token.holderCount} holders (min ${settings.minHolders})`,
-        value:        token.holderCount,
+        type:     'HONEYPOT_SUSPECTED',
+        severity: 'critical',
+        description: `${token.buyCount24h} buys vs ${token.sellCount24h} sells — mogelijk honeypot`,
       });
     }
 
-    if (!token.isLiquidityLocked && token.ageMinutes < 60) {
+    if (token.rugCheckScore < 20) {
       flags.push({
-        type:        'LIQUIDITY_NOT_LOCKED',
-        severity:    'high',
-        description: 'Liquiditeit niet vergrendeld — deployer kan pool legen',
+        type:     'RUG_RISK',
+        severity: 'critical',
+        description: `RugCheck score: ${token.rugCheckScore}/100`,
+        value: token.rugCheckScore,
       });
     }
 
     // ── WAARSCHUWINGEN ────────────────────────────────────
 
-    if (token.buySellRatio < 0.5) {
+    if (token.holderCount < settings.minHolders) {
       flags.push({
-        type:        'HIGH_SELL_PRESSURE',
-        severity:    token.buySellRatio < 0.3 ? 'high' : 'medium',
-        description: `Buy/sell ratio: ${token.buySellRatio.toFixed(2)}`,
-        value:        token.buySellRatio,
-      });
-      warnings.push('Hoge verkoopdruk');
-    }
-
-    if (token.rugCheckScore < 30) {
-      flags.push({
-        type:        'RUG_RISK',
-        severity:    token.rugCheckScore < 15 ? 'critical' : 'high',
-        description: `RugCheck score: ${token.rugCheckScore}/100`,
-        value:        token.rugCheckScore,
+        type:     'TOO_FEW_HOLDERS',
+        severity: token.holderCount < 10 ? 'high' : 'medium',
+        description: `${token.holderCount} holders (min ${settings.minHolders})`,
+        value: token.holderCount,
       });
     }
 
-    if (token.ageMinutes < settings.minAgeMinutes) {
+    if (!token.isLiquidityLocked && token.ageMinutes < 30) {
       flags.push({
-        type:        'TOO_NEW',
-        severity:    'medium',
-        description: `Token is ${token.ageMinutes.toFixed(1)} minuten oud`,
-        value:        token.ageMinutes,
+        type:     'LIQUIDITY_NOT_LOCKED',
+        severity: 'medium',
+        description: 'Liquiditeit niet vergrendeld en token < 30 min oud',
+      });
+      warnings.push('Liquiditeit niet vergrendeld');
+    }
+
+    if (token.buySellRatio < 0.4) {
+      flags.push({
+        type:     'HIGH_SELL_PRESSURE',
+        severity: token.buySellRatio < 0.2 ? 'high' : 'medium',
+        description: `Buy/sell ratio: ${token.buySellRatio.toFixed(2)} — hoge verkoopdruk`,
+        value: token.buySellRatio,
       });
     }
 
-    if (token.volume24h < settings.minVolume24h) {
+    if (token.rugCheckScore < 40 && token.rugCheckScore >= 20) {
       flags.push({
-        type:        'LOW_VOLUME',
-        severity:    'medium',
-        description: `24u volume $${_fmt(token.volume24h)} te laag`,
-        value:        token.volume24h,
+        type:     'LOW_RUGCHECK',
+        severity: 'medium',
+        description: `RugCheck ${token.rugCheckScore}/100 — laag`,
+        value: token.rugCheckScore,
       });
-    }
-
-    // Honeypot detectie
-    if (token.buyCount24h > 100 && token.sellCount24h < 5) {
-      flags.push({
-        type:        'HONEYPOT_SUSPECTED',
-        severity:    'critical',
-        description: `${token.buyCount24h} buys maar slechts ${token.sellCount24h} sells — mogelijk honeypot`,
-      });
+      warnings.push('Lage RugCheck score');
     }
 
     // ── EINDOORDEEL ───────────────────────────────────────
     const criticals = flags.filter(f => f.severity === 'critical').length;
     const highs     = flags.filter(f => f.severity === 'high').length;
+    // Veilig als: geen criticals EN max 1 high
     const isSafe    = criticals === 0 && highs <= 1;
 
     return { isSafe, flags, warnings };
   }
 
-  function _fmt(n) {
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
-    return n.toFixed(0);
+  function _f(n) {
+    if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+    if (n >= 1e3) return (n/1e3).toFixed(0)+'K';
+    return (n||0).toFixed(0);
   }
 
   return { analyze };
-
 })();

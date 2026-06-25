@@ -1,7 +1,13 @@
 /* ============================================================
-   STORAGE.JS - localStorage wrapper met defaults
+   STORAGE.JS - localStorage wrapper
+   €1 Challenge met fee-bewust risicobeheer
+   
+   SOLANA FEES (realistisch):
+   - Netwerk fee:     ~0.000005 SOL per tx (~$0.001)
+   - Axiom fee:       1% van trade waarde
+   - Slippage small:  1-3% bij kleine liquiditeit
+   - TOTAAL per trade roundtrip: ~2-4% van trade waarde
    ============================================================ */
-
 'use strict';
 
 const Storage = (() => {
@@ -16,99 +22,102 @@ const Storage = (() => {
     WALLET:        'axiom_wallet',
   };
 
-  const MAX_LOGS    = 500;
+  const MAX_LOGS    = 300;
   const MAX_SIGNALS = 200;
   const MAX_CLOSED  = 500;
 
-  const DEFAULT_SETTINGS = {
-    tradingMode:        'paper',
-    startingCapital:    0.1,
-    tradeAmount:        0.01,
-    maxOpenPositions:   5,
-    stopLossPercent:    15,
-    takeProfit1Percent: 30,
-    takeProfit2Percent: 80,
-    minScore:           70,
-    minLiquidityUsd:    10000,
-    minHolders:         50,
-    maxTopHolderPercent:20,
-    minVolume24h:       5000,
-    minMarketCap:       5000,
-    maxMarketCap:       10000000,
-    minAgeMinutes:      5,
-    maxAgeMinutes:      1440,
-    heliusApiKey:       '',
-    birdeyeApiKey:      '',
-    scanIntervalSeconds:30,
+  // ── FEE CONSTANTEN ────────────────────────────────────────
+  // Worden gebruikt door tradeManager voor realistische simulatie
+  const FEES = {
+    networkFeeSOL:    0.000005, // ~$0.001 vaste Solana tx fee
+    axiomFeePct:      0.01,     // 1% Axiom platform fee
+    slippagePct:      0.02,     // 2% slippage (conservatief voor kleine liquidity)
+    totalRoundtripPct:0.06,     // ~6% totaal heen+terug (buy+sell fees+slippage)
   };
 
-  // ── LOW-LEVEL ──────────────────────────────────────────────
+  // €1 challenge defaults
+  // Bij SOL = $170 → €1 ≈ 0.0058 SOL
+  // Minimale trade zodat fees niet >20% van trade zijn: 0.002 SOL (~€0.34)
+  // Dit betekent: fees ≈ 6% van 0.002 = 0.00012 SOL ($0.02) — acceptabel
+  const DEFAULT_SETTINGS = {
+    tradingMode:          'paper',
+    startingCapital:      0.006,   // ~€1
+    tradeAmount:          0.002,   // ~€0.34 — minimum voor acceptabele fee ratio
+    maxOpenPositions:     2,       // Max 2 tegelijk bij zo weinig kapitaal
+    stopLossPercent:      20,
+    takeProfit1Percent:   60,      // +60% eerste exit (fees al ingecalculeerd)
+    takeProfit2Percent:   200,     // +200% volledige exit — memecoins x3 is realistisch
+    minScore:             65,
+    minLiquidityUsd:      5000,    // Min $5K liquidity anders te veel slippage
+    minHolders:           30,
+    maxTopHolderPercent:  25,
+    minVolume24h:         3000,
+    minMarketCap:         3000,
+    maxMarketCap:         3000000,
+    minAgeMinutes:        3,
+    maxAgeMinutes:        480,
+    heliusApiKey:         '',
+    birdeyeApiKey:        '',
+    scanIntervalSeconds:  20,
+  };
 
   function _get(key) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+    try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; }
+    catch { return null; }
   }
 
   function _set(key, value) {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage vol */ }
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch(e) { console.warn('[Storage] vol:', e); }
   }
 
-  // ── SETTINGS ──────────────────────────────────────────────
-
-  function getSettings() {
-    return Object.assign({}, DEFAULT_SETTINGS, _get(KEYS.SETTINGS) || {});
-  }
-
-  function saveSettings(s) {
-    _set(KEYS.SETTINGS, s);
-  }
-
+  function getSettings()        { return Object.assign({}, DEFAULT_SETTINGS, _get(KEYS.SETTINGS) || {}); }
+  function saveSettings(s)      { _set(KEYS.SETTINGS, s); }
   function getDefaultSettings() { return Object.assign({}, DEFAULT_SETTINGS); }
-
-  // ── PORTFOLIO ─────────────────────────────────────────────
+  function getFees()            { return Object.assign({}, FEES); }
 
   function getPortfolio() {
     const s = getSettings();
-    return _get(KEYS.PORTFOLIO) || {
-      startingBalance:  s.startingCapital,
-      currentBalance:   s.startingCapital,
-      totalPnlSol:      0,
-      totalPnlPercent:  0,
-      winRate:          0,
-      totalTrades:      0,
-      winningTrades:    0,
-      losingTrades:     0,
-      bestTrade:        0,
-      worstTrade:       0,
-    };
+    return Object.assign({
+      startingBalance: s.startingCapital,
+      currentBalance:  s.startingCapital,
+      totalPnlSol:     0,
+      totalPnlPercent: 0,
+      winRate:         0,
+      totalTrades:     0,
+      winningTrades:   0,
+      losingTrades:    0,
+      bestTrade:       0,
+      worstTrade:      0,
+      totalFeesPaid:   0,
+    }, _get(KEYS.PORTFOLIO) || {});
   }
 
-  function savePortfolio(p) { _set(KEYS.PORTFOLIO, p); }
+  function savePortfolio(p)  { _set(KEYS.PORTFOLIO, p); }
 
   function resetPortfolio() {
     const s = getSettings();
-    savePortfolio({
-      startingBalance:  s.startingCapital,
-      currentBalance:   s.startingCapital,
-      totalPnlSol:      0,
-      totalPnlPercent:  0,
-      winRate:          0,
-      totalTrades:      0,
-      winningTrades:    0,
-      losingTrades:     0,
-      bestTrade:        0,
-      worstTrade:       0,
+    _set(KEYS.PORTFOLIO, {
+      startingBalance: s.startingCapital,
+      currentBalance:  s.startingCapital,
+      totalPnlSol:     0,
+      totalPnlPercent: 0,
+      winRate:         0,
+      totalTrades:     0,
+      winningTrades:   0,
+      losingTrades:    0,
+      bestTrade:       0,
+      worstTrade:      0,
+      totalFeesPaid:   0,
     });
-    _set(KEYS.OPEN_TRADES, []);
+    _set(KEYS.OPEN_TRADES,   []);
     _set(KEYS.CLOSED_TRADES, []);
+    _set(KEYS.SIGNALS,       []);
+    _set(KEYS.LOGS,          []);
   }
 
-  // ── TRADES ────────────────────────────────────────────────
-
-  function getOpenTrades()  { return _get(KEYS.OPEN_TRADES)  || []; }
-  function saveOpenTrades(t){ _set(KEYS.OPEN_TRADES, t); }
+  function getOpenTrades()   { return _get(KEYS.OPEN_TRADES) || []; }
+  function saveOpenTrades(t) { _set(KEYS.OPEN_TRADES, t); }
 
   function getClosedTrades(limit) {
     const all = _get(KEYS.CLOSED_TRADES) || [];
@@ -122,8 +131,6 @@ const Storage = (() => {
     _set(KEYS.CLOSED_TRADES, all);
   }
 
-  // ── LOGS ──────────────────────────────────────────────────
-
   function getLogs(limit) {
     const all = _get(KEYS.LOGS) || [];
     return limit ? all.slice(0, limit) : all;
@@ -131,20 +138,14 @@ const Storage = (() => {
 
   function addLog(level, message, extra) {
     const all = _get(KEYS.LOGS) || [];
-    all.unshift({
-      id:        'log_' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
-      timestamp: Date.now(),
-      level,
-      message,
-      ...extra,
-    });
+    all.unshift(Object.assign({ id: 'l'+Date.now(), timestamp: Date.now(), level, message }, extra || {}));
     if (all.length > MAX_LOGS) all.splice(MAX_LOGS);
     _set(KEYS.LOGS, all);
+    const fn = level === 'error' ? console.error : level === 'warning' ? console.warn : console.log;
+    fn(`[Axiom][${level}] ${message}`);
   }
 
   function clearLogs() { _set(KEYS.LOGS, []); }
-
-  // ── SIGNALS ───────────────────────────────────────────────
 
   function getSignals(limit) {
     const all = _get(KEYS.SIGNALS) || [];
@@ -153,6 +154,12 @@ const Storage = (() => {
 
   function addSignal(signal) {
     const all = _get(KEYS.SIGNALS) || [];
+    const recent = all.find(s =>
+      s.tokenData && signal.tokenData &&
+      s.tokenData.address === signal.tokenData.address &&
+      (signal.timestamp - s.timestamp) < 30000
+    );
+    if (recent) return;
     all.unshift(signal);
     if (all.length > MAX_SIGNALS) all.splice(MAX_SIGNALS);
     _set(KEYS.SIGNALS, all);
@@ -160,13 +167,10 @@ const Storage = (() => {
 
   function clearSignals() { _set(KEYS.SIGNALS, []); }
 
-  // ── WALLET ────────────────────────────────────────────────
-
   function getWallet() {
     return _get(KEYS.WALLET) || { isConnected: false, publicKey: null, balance: null };
   }
 
-  // NOOIT private keys opslaan - alleen publieke wallet info
   function saveWallet(info) {
     _set(KEYS.WALLET, {
       isConnected: !!info.isConnected,
@@ -175,10 +179,8 @@ const Storage = (() => {
     });
   }
 
-  // ── PUBLIC API ────────────────────────────────────────────
-
   return {
-    getSettings, saveSettings, getDefaultSettings,
+    getSettings, saveSettings, getDefaultSettings, getFees,
     getPortfolio, savePortfolio, resetPortfolio,
     getOpenTrades, saveOpenTrades,
     getClosedTrades, addClosedTrade,
@@ -186,5 +188,4 @@ const Storage = (() => {
     getSignals, addSignal, clearSignals,
     getWallet, saveWallet,
   };
-
 })();

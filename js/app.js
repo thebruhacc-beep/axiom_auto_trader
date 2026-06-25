@@ -1,124 +1,89 @@
 /* ============================================================
-   APP.JS - Hoofd applicatie controller
-   Verbindt alle modules en beheert navigatie + events
+   APP.JS - Hoofd controller
    ============================================================ */
-
 'use strict';
 
 const App = (() => {
 
-  // ── STATE ─────────────────────────────────────────────────
   let _currentPage  = 'dashboard';
   let _allTokens    = [];
   let _allSignals   = [];
   let _refreshTimer = null;
 
-  // ── INITIALISATIE ─────────────────────────────────────────
-
   async function init() {
-    _setupNavigation();
-    _setupScannerButtons();
-    _setupWalletButtons();
-    _setupModeButtons();
-    _setupSettingsPage();
+    _setupNav();
+    _setupScannerBtns();
+    _setupWalletBtns();
+    _setupModeBtns();
+    _setupSettings();
     _setupSignalsPage();
-    _setupBacktestPage();
-    _setupLogButtons();
+    _setupBacktest();
+    _setupLogBtns();
 
-    // Scanner callbacks
     Scanner.setCallbacks({
-      onSignal:    _onNewSignal,
-      onStatus:    _onScannerStatus,
+      onSignal:    _onSignal,
+      onStatus:    _onStatus,
       onNewTokens: _onNewTokens,
     });
 
-    // Laad opgeslagen instellingen in formulier
     UI.loadSettingsIntoForm();
-
-    // Herstel wallet sessie (Phantom eager connect)
     await _tryRestoreWallet();
-
-    // Eerste render
     _refreshUI();
+    _refreshTimer = setInterval(_refreshUI, 8000);
 
-    // Periodieke UI refresh elke 10 seconden
-    _refreshTimer = setInterval(_refreshUI, 10000);
-
-    console.log('[App] Axiom Scanner geladen');
+    Storage.addLog('info', '🚀 Axiom Scanner geladen — klik Start Scanner');
+    console.log('[App] Axiom Scanner klaar');
   }
 
   // ── NAVIGATIE ─────────────────────────────────────────────
-
-  function _setupNavigation() {
+  function _setupNav() {
     document.querySelectorAll('.nav-item').forEach(item => {
-      item.addEventListener('click', e => {
-        e.preventDefault();
-        const page = item.dataset.page;
-        if (page) _navigateTo(page);
-      });
+      item.addEventListener('click', e => { e.preventDefault(); _goto(item.dataset.page); });
     });
   }
 
-  function _navigateTo(page) {
+  function _goto(page) {
+    if (!page) return;
     _currentPage = page;
-
-    // Update nav actief
-    document.querySelectorAll('.nav-item').forEach(n => {
-      n.classList.toggle('nav-item--active', n.dataset.page === page);
-    });
-
-    // Toon correcte pagina
-    document.querySelectorAll('.page').forEach(p => {
-      p.classList.toggle('page--active', p.id === `page-${page}`);
-    });
-
-    // Laad pagina-specifieke data
-    _loadPageData(page);
+    document.querySelectorAll('.nav-item').forEach(n =>
+      n.classList.toggle('nav-item--active', n.dataset.page === page)
+    );
+    document.querySelectorAll('.page').forEach(p =>
+      p.classList.toggle('page--active', p.id === `page-${page}`)
+    );
+    _loadPage(page);
   }
 
-  function _loadPageData(page) {
+  function _loadPage(page) {
     switch (page) {
-      case 'dashboard':
-        _refreshDashboard();
-        break;
+      case 'dashboard': _refreshDash(); break;
       case 'scanner':
-        UI.renderScannerTable(
-          _allTokens, _allSignals,
+        UI.renderScannerTable(_allTokens, _allSignals,
           document.getElementById('scanner-search')?.value || '',
           document.getElementById('scanner-sort')?.value   || 'score',
           document.getElementById('scanner-filter-action')?.value || 'all'
-        );
-        break;
+        ); break;
       case 'signals':
         UI.renderSignalCards(
           Storage.getSignals(100),
           document.getElementById('sig-filter')?.value || 'all',
           document.getElementById('sig-only-safe')?.checked ?? true
-        );
-        break;
+        ); break;
       case 'positions':
-        UI.renderOpenPositions(_onClosePosition);
-        UI.renderTradeHistory();
-        break;
+        UI.renderOpenPositions(_onClosePos);
+        UI.renderTradeHistory(); break;
       case 'settings':
-        UI.loadSettingsIntoForm();
-        break;
+        UI.loadSettingsIntoForm(); break;
       case 'backtest':
-        // Stel standaard datums in
-        _initBacktestDates();
-        break;
+        _initBtDates(); break;
     }
   }
 
-  // ── SCANNER KNOPPEN ───────────────────────────────────────
-
-  function _setupScannerButtons() {
+  // ── SCANNER ───────────────────────────────────────────────
+  function _setupScannerBtns() {
     document.getElementById('btn-toggle-scanner')?.addEventListener('click', () => {
-      if (Scanner.isRunning()) {
-        Scanner.stop();
-      } else {
-        Scanner.start();
-      }
+      if (Scanner.isRunning()) Scanner.stop();
+      else Scanner.start();
       UI.updateScannerStatus(Scanner.isRunning());
     });
 
@@ -126,47 +91,47 @@ const App = (() => {
       Scanner.scanOnce();
       UI.toast('Handmatige scan gestart...', 'info');
     });
+
+    // Scanner filters op scanner pagina
+    ['scanner-search','scanner-sort','scanner-filter-action'].forEach(id => {
+      document.getElementById(id)?.addEventListener('change', () => {
+        if (_currentPage === 'scanner') _loadPage('scanner');
+      });
+    });
+    document.getElementById('scanner-search')?.addEventListener('input', () => {
+      if (_currentPage === 'scanner') _loadPage('scanner');
+    });
   }
 
-  // ── SCANNER CALLBACKS ─────────────────────────────────────
-
-  function _onScannerStatus(status) {
+  function _onStatus(status) {
     UI.updateScannerStatus(status.isRunning);
-    _refreshDashboard();
+    _refreshKPIs();
   }
 
-  function _onNewSignal(signal) {
-    // Toon toast bij koopsignaal
+  function _onSignal(signal, trade) {
     if (signal.action === 'BUY') {
-      UI.toast(
-        `🚀 Koopsignaal: ${signal.tokenData.symbol} — Score ${signal.scoreResult.total}/100`,
-        'success'
-      );
+      const tradeMsg = trade ? ` → Trade geopend!` : '';
+      UI.toast(`🚀 ${signal.tokenData?.symbol} score ${signal.scoreResult?.total}/100${tradeMsg}`, 'success', 6000);
     }
-    // Refresh actieve pagina
-    if (_currentPage === 'dashboard') _refreshDashboard();
-    if (_currentPage === 'signals')   _loadPageData('signals');
+    if (_currentPage === 'dashboard') _refreshDash();
+    if (_currentPage === 'signals')   _loadPage('signals');
+    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
   }
 
   function _onNewTokens(tokens, signals) {
     _allTokens  = tokens;
     _allSignals = signals;
-
-    if (_currentPage === 'scanner') _loadPageData('scanner');
-    if (_currentPage === 'positions') {
-      UI.renderOpenPositions(_onClosePosition);
-      UI.renderTradeHistory();
-    }
-    _refreshDashboard();
+    if (_currentPage === 'scanner')   _loadPage('scanner');
+    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
+    _refreshKPIs();
   }
 
   // ── POSITIE SLUITEN ───────────────────────────────────────
-
-  async function _onClosePosition(tradeId) {
+  async function _onClosePos(tradeId) {
     const ok = await TradeManager.manualClose(tradeId);
     if (ok) {
       UI.toast('Positie gesloten', 'success');
-      UI.renderOpenPositions(_onClosePosition);
+      UI.renderOpenPositions(_onClosePos);
       UI.renderTradeHistory();
       _refreshKPIs();
     } else {
@@ -175,11 +140,10 @@ const App = (() => {
   }
 
   // ── WALLET ────────────────────────────────────────────────
-
-  function _setupWalletButtons() {
+  function _setupWalletBtns() {
     document.getElementById('btn-connect-wallet')?.addEventListener('click', async () => {
-      const wallet = Storage.getWallet();
-      if (wallet.isConnected) {
+      const w = Storage.getWallet();
+      if (w.isConnected) {
         await Wallet.disconnect();
         UI.updateWalletUI(Storage.getWallet());
         UI.toast('Wallet verbroken', 'info');
@@ -187,7 +151,7 @@ const App = (() => {
         try {
           const info = await Wallet.connect();
           UI.updateWalletUI({ isConnected: true, publicKey: info.publicKey, balance: info.balance });
-          UI.toast(`👻 Verbonden: ${info.publicKey.slice(0,8)}... | ${info.balance.toFixed(4)} SOL`, 'success');
+          UI.toast(`👻 ${info.publicKey.slice(0,8)}... | ${info.balance.toFixed(4)} SOL`, 'success');
         } catch (err) {
           UI.toast(err.message, 'error');
         }
@@ -197,199 +161,146 @@ const App = (() => {
 
   async function _tryRestoreWallet() {
     const stored = Storage.getWallet();
+    UI.updateWalletUI(stored);
     if (stored.isConnected) {
-      // Probeer automatisch te herverbinden
-      try {
-        const info = await Wallet.tryAutoConnect();
-        if (info) {
-          UI.updateWalletUI({ isConnected: true, publicKey: info.publicKey, balance: info.balance });
-        } else {
-          UI.updateWalletUI({ isConnected: false, publicKey: null, balance: null });
-        }
-      } catch {
-        UI.updateWalletUI({ isConnected: false, publicKey: null, balance: null });
-      }
+      const info = await Wallet.tryAutoConnect().catch(() => null);
+      if (info) UI.updateWalletUI({ isConnected: true, publicKey: info.publicKey, balance: info.balance });
+      else      UI.updateWalletUI({ isConnected: false, publicKey: null, balance: null });
     }
   }
 
-  // Externe callback voor wallet wijzigingen (vanuit wallet.js)
-  function onWalletChange() {
-    UI.updateWalletUI(Storage.getWallet());
-  }
+  function onWalletChange() { UI.updateWalletUI(Storage.getWallet()); }
 
-  // ── MODE TOGGLE ───────────────────────────────────────────
-
-  function _setupModeButtons() {
+  // ── MODUS ─────────────────────────────────────────────────
+  function _setupModeBtns() {
     document.getElementById('btn-paper')?.addEventListener('click', () => {
-      const s = Storage.getSettings();
-      s.tradingMode = 'paper';
-      Storage.saveSettings(s);
+      const s = Storage.getSettings(); s.tradingMode = 'paper'; Storage.saveSettings(s);
       UI.updateModeUI('paper');
-      UI.toast('Modus: Paper Trading', 'info');
+      UI.toast('📄 Paper Trading geactiveerd', 'info');
     });
 
     document.getElementById('btn-live')?.addEventListener('click', () => {
       if (!Wallet.isConnected()) {
-        UI.toast('Verbind eerst je Phantom wallet voor live trading', 'warning');
-        return;
+        UI.toast('⚠️ Verbind eerst Phantom wallet', 'warning'); return;
       }
       if (!confirm(
-        '⚠️ WAARSCHUWING\n\n' +
-        'Live trading gebruikt ECHT SOL.\n' +
-        'U kunt uw volledige inleg verliezen.\n\n' +
-        'Zeker weten?'
+        '⚠️ WAARSCHUWING — LIVE TRADING\n\n' +
+        'Dit gebruikt ECHT SOL van je wallet.\n' +
+        'Fees zijn ~6% per roundtrip.\n' +
+        'Bij €1 kapitaal is elke verliezende trade zwaar.\n\n' +
+        'Zeker weten dat je live wilt gaan?'
       )) return;
-
-      const s = Storage.getSettings();
-      s.tradingMode = 'live';
-      Storage.saveSettings(s);
+      const s = Storage.getSettings(); s.tradingMode = 'live'; Storage.saveSettings(s);
       UI.updateModeUI('live');
-      UI.toast('⚠️ Live Trading geactiveerd — wees voorzichtig!', 'warning');
+      UI.toast('🔴 LIVE Trading — wees voorzichtig!', 'warning', 7000);
     });
 
-    // Initiële modus tonen
-    const s = Storage.getSettings();
-    UI.updateModeUI(s.tradingMode);
+    UI.updateModeUI(Storage.getSettings().tradingMode);
   }
 
   // ── INSTELLINGEN ─────────────────────────────────────────
-
-  function _setupSettingsPage() {
+  function _setupSettings() {
     document.getElementById('btn-save-settings')?.addEventListener('click', () => {
-      const newSettings = UI.readSettingsFromForm();
-      Storage.saveSettings(newSettings);
-      UI.toast('✅ Instellingen opgeslagen', 'success');
-
-      // Herstart scanner met nieuwe interval als die draait
-      if (Scanner.isRunning()) {
-        Scanner.stop();
-        setTimeout(() => Scanner.start(), 500);
-        UI.toast('Scanner herstart met nieuwe instellingen', 'info');
+      const ns = UI.readSettingsFromForm();
+      // Valideer minimum tradeAmount zodat fees niet >25% worden
+      const fees = Storage.getFees();
+      const minTrade = (fees.networkFeeSOL / 0.25); // fees max 25% van trade
+      if (ns.tradeAmount < minTrade) {
+        UI.toast(`⚠️ Trade bedrag te laag — fees worden >25%. Min: ${minTrade.toFixed(5)} SOL`, 'warning', 6000);
       }
+      Storage.saveSettings(ns);
+      UI.loadSettingsIntoForm();
+      UI.toast('✅ Instellingen opgeslagen', 'success');
+      if (Scanner.isRunning()) { Scanner.stop(); setTimeout(() => Scanner.start(), 300); }
+    });
+
+    document.getElementById('btn-reset-portfolio')?.addEventListener('click', () => {
+      if (!confirm('Portfolio resetten naar startkapitaal? Alle trades worden gewist.')) return;
+      Storage.resetPortfolio();
+      UI.toast('Portfolio gereset', 'info');
+      _refreshKPIs();
     });
   }
 
   // ── SIGNALEN PAGINA ───────────────────────────────────────
-
   function _setupSignalsPage() {
-    document.getElementById('sig-filter')?.addEventListener('change', () => _loadPageData('signals'));
-    document.getElementById('sig-only-safe')?.addEventListener('change', () => _loadPageData('signals'));
+    document.getElementById('sig-filter')?.addEventListener('change',    () => _loadPage('signals'));
+    document.getElementById('sig-only-safe')?.addEventListener('change', () => _loadPage('signals'));
   }
 
-  // ── SCANNER PAGINA ────────────────────────────────────────
-
-  // (Filters lukken via delegatie in _loadPageData)
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('scanner-search')?.addEventListener('input', () => {
-      if (_currentPage === 'scanner') _loadPageData('scanner');
-    });
-    document.getElementById('scanner-sort')?.addEventListener('change', () => {
-      if (_currentPage === 'scanner') _loadPageData('scanner');
-    });
-    document.getElementById('scanner-filter-action')?.addEventListener('change', () => {
-      if (_currentPage === 'scanner') _loadPageData('scanner');
-    });
-  });
-
-  // ── LOG KNOPPEN ───────────────────────────────────────────
-
-  function _setupLogButtons() {
+  // ── LOGS ─────────────────────────────────────────────────
+  function _setupLogBtns() {
     document.getElementById('btn-clear-log-dash')?.addEventListener('click', () => {
-      Storage.clearLogs();
-      UI.renderLog('dashboard-log');
-      UI.toast('Logs gewist', 'info');
+      Storage.clearLogs(); UI.renderLog('dashboard-log'); UI.toast('Logs gewist','info');
     });
   }
 
   // ── BACKTEST ─────────────────────────────────────────────
-
-  function _setupBacktestPage() {
+  function _setupBacktest() {
     document.getElementById('btn-run-backtest')?.addEventListener('click', async () => {
       const btn = document.getElementById('btn-run-backtest');
-      btn.disabled    = true;
-      btn.textContent = '⏳ Bezig...';
-
+      btn.disabled = true; btn.textContent = '⏳ Bezig...';
       try {
-        const startDate = new Date(document.getElementById('bt-start').value).getTime();
-        const endDate   = new Date(document.getElementById('bt-end').value).getTime();
-
-        if (isNaN(startDate) || isNaN(endDate) || endDate <= startDate) {
-          UI.toast('Ongeldige datums', 'error');
-          return;
-        }
+        const start = new Date(document.getElementById('bt-start').value).getTime();
+        const end   = new Date(document.getElementById('bt-end').value).getTime();
+        if (isNaN(start)||isNaN(end)||end<=start) { UI.toast('Ongeldige datums','error'); return; }
 
         const config = {
-          startDate,
-          endDate,
-          capital:    parseFloat(document.getElementById('bt-capital').value)    || 0.1,
-          minScore:   parseInt(document.getElementById('bt-min-score').value)    || 70,
-          sl:         parseFloat(document.getElementById('bt-sl').value)         || 15,
-          tp1:        parseFloat(document.getElementById('bt-tp1').value)        || 30,
-          tp2:        parseFloat(document.getElementById('bt-tp2').value)        || 80,
-          tradeAmount:parseFloat(document.getElementById('bt-amount').value)     || 0.01,
+          startDate:  start,
+          endDate:    end,
+          capital:    parseFloat(document.getElementById('bt-capital').value)    || 0.006,
+          minScore:   parseInt(document.getElementById('bt-min-score').value)    || 65,
+          sl:         parseFloat(document.getElementById('bt-sl').value)         || 20,
+          tp1:        parseFloat(document.getElementById('bt-tp1').value)        || 60,
+          tp2:        parseFloat(document.getElementById('bt-tp2').value)        || 200,
+          tradeAmount:parseFloat(document.getElementById('bt-amount').value)     || 0.002,
         };
 
-        // Run in small timeout zodat UI kan updaten
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(r => setTimeout(r, 30));
         const result = BacktestEngine.run(config);
         UI.renderBacktestResults(result);
-        UI.toast(`Backtest klaar: ${result.trades.length} trades, ${result.metrics.totalReturn.toFixed(2)}% rendement`, 'success');
-
-      } catch (err) {
-        UI.toast('Backtest fout: ' + err.message, 'error');
-        console.error('[Backtest]', err);
+        UI.toast(`Klaar: ${result.trades.length} trades | ${result.metrics.totalReturn.toFixed(1)}% rendement`, 'success');
+      } catch(e) {
+        UI.toast('Backtest fout: '+e.message,'error');
+        console.error(e);
       } finally {
-        btn.disabled    = false;
-        btn.textContent = '▶ Backtest Uitvoeren';
+        btn.disabled = false; btn.textContent = '▶ Backtest Uitvoeren';
       }
     });
   }
 
-  function _initBacktestDates() {
-    const endEl   = document.getElementById('bt-end');
-    const startEl = document.getElementById('bt-start');
-    if (!endEl.value) {
-      const now    = new Date();
-      const month  = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      endEl.value   = now.toISOString().slice(0, 10);
-      startEl.value = month.toISOString().slice(0, 10);
+  function _initBtDates() {
+    const endEl = document.getElementById('bt-end');
+    if (!endEl?.value) {
+      const now = new Date();
+      const ago = new Date(now - 30*24*60*60*1000);
+      document.getElementById('bt-end').value   = now.toISOString().slice(0,10);
+      document.getElementById('bt-start').value = ago.toISOString().slice(0,10);
     }
   }
 
   // ── REFRESH ───────────────────────────────────────────────
-
   function _refreshUI() {
     _refreshKPIs();
-    if (_currentPage === 'dashboard') _refreshDashboard();
+    if (_currentPage === 'dashboard')  _refreshDash();
+    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
   }
 
   function _refreshKPIs() {
-    const portfolio = Storage.getPortfolio();
-    const status    = {
-      isRunning:    Scanner.isRunning(),
-      scannedCount: 0,
-      lastScan:     Date.now(),
-    };
-    UI.updateKPIs(portfolio, status);
+    const p = Storage.getPortfolio();
+    UI.updateKPIs(p, { scannedCount: 0 });
     UI.updateScannerStatus(Scanner.isRunning());
+    UI.updateModeUI(Storage.getSettings().tradingMode);
   }
 
-  function _refreshDashboard() {
+  function _refreshDash() {
     _refreshKPIs();
-
-    // Recente signalen
-    const signals = Storage.getSignals(20);
-    UI.renderSignalFeed('dashboard-signals', signals.filter(s => s.action !== 'SKIP'));
-
-    // Log feed
+    const sigs = Storage.getSignals(30).filter(s => s.action !== 'SKIP');
+    UI.renderSignalFeed('dashboard-signals', sigs);
     UI.renderLog('dashboard-log', 60);
   }
 
-  // ── PUBLIC API ────────────────────────────────────────────
-
   return { init, onWalletChange };
-
 })();
 
-// ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => App.init());
