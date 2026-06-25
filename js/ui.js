@@ -22,7 +22,9 @@ const UI = (() => {
     const pnl = portfolio.totalPnlPercent || 0;
 
     _txt('kpi-balance', bal.toFixed(5) + ' SOL');
-    _txt('kpi-balance-usd', `≈ $${(bal * 170).toFixed(2)}`);
+    // Gebruik gecachede SOL prijs van TokenFetcher indien beschikbaar
+    const solP = (typeof TokenFetcher !== 'undefined' && TokenFetcher._solPrice) ? TokenFetcher._solPrice : 170;
+    _txt('kpi-balance-usd', `≈ $${(bal * solP).toFixed(2)} | start: ${(portfolio.startingBalance||0).toFixed(5)} SOL`);
 
     const pnlEl = _el('kpi-pnl');
     if (pnlEl) {
@@ -96,21 +98,79 @@ const UI = (() => {
   function renderSignalFeed(containerId, signals) {
     const el = _el(containerId);
     if (!el) return;
-    const list = (signals || []).filter(s => s.action !== 'SKIP').slice(0, 15);
-    if (!list.length) { el.innerHTML = '<div class="empty">Geen signalen gevonden door filters</div>'; return; }
-    el.innerHTML = list.map(s => {
-      const sc  = s.scoreResult?.total || 0;
-      const act = (s.action || 'SKIP').toLowerCase();
-      const sc_class = sc >= 65 ? 'score-h' : sc >= 48 ? 'score-m' : 'score-l';
-      return `<div class="sig-row sig-row--${act}" data-url="${_esc(s.tokenData?.dexscreenerUrl||'#')}">
-        <span class="sig-sym">${_esc(s.tokenData?.symbol||'?')}</span>
-        <span class="sig-score ${sc_class}">${sc}</span>
-        <span class="sig-meta">MC: ${_usd(s.tokenData?.marketCap)} | Liq: ${_usd(s.tokenData?.liquidity)}</span>
+
+    // Sorteer: BUY eerst, dan WATCH, dan rest
+    const all   = (signals || []).slice();
+    const order = { BUY: 0, WATCH: 1, SKIP: 2, DANGER: 3 };
+    all.sort((a, b) => (order[a.action] || 2) - (order[b.action] || 2));
+
+    // Update badge met aantal koopsignalen
+    const badge    = _el('signals-badge');
+    const buyCount = all.filter(s => s.action === 'BUY').length;
+    if (badge) {
+      if (buyCount > 0) {
+        badge.textContent = buyCount + ' koop!';
+        badge.style.cssText = 'background:rgba(20,241,149,0.2);color:var(--green);border-color:rgba(20,241,149,0.3)';
+      } else {
+        badge.textContent  = all.length + ' totaal';
+        badge.style.cssText = '';
+      }
+    }
+
+    if (!all.length) {
+      el.innerHTML = '<div class="empty">Nog geen signalen — scanner actief...</div>';
+      return;
+    }
+
+    el.innerHTML = all.slice(0, 20).map(s => {
+      const sc     = s.scoreResult?.total || 0;
+      const act    = (s.action || 'SKIP').toLowerCase();
+      const scCls  = sc >= 65 ? 'score-h' : sc >= 48 ? 'score-m' : 'score-l';
+      const sym    = _esc(s.tokenData?.symbol || '?');
+      const mc     = _usd(s.tokenData?.marketCap || 0);
+      const liq    = _usd(s.tokenData?.liquidity || 0);
+      const bs     = (s.tokenData?.buySellRatio  || 0).toFixed(2);
+      const ch     = (s.tokenData?.priceChange1h || 0);
+      const chCol  = ch >= 0 ? 'var(--green2)' : 'var(--red)';
+      const url    = _esc(s.tokenData?.dexscreenerUrl || '#');
+      return `<div class="sig-row sig-row--${act}" data-url="${url}">
+        <span class="sig-sym">${sym}</span>
+        <span class="sig-score ${scCls}">${sc}</span>
+        <span class="sig-meta">MC:${mc} | Liq:${liq} | B/S:${bs}</span>
+        <span style="font-size:10px;color:${chCol}">${ch>=0?'+':''}${ch.toFixed(1)}%</span>
         <span class="sig-age">${_ago(s.timestamp)}</span>
       </div>`;
     }).join('');
+
     el.querySelectorAll('[data-url]').forEach(r =>
-      r.addEventListener('click', () => window.open(r.dataset.url,'_blank'))
+      r.addEventListener('click', () => window.open(r.dataset.url, '_blank'))
+    );
+  }
+
+      return;
+    }
+
+    el.innerHTML = list.map(s => {
+      const sc       = s.scoreResult?.total || 0;
+      const act      = (s.action || 'SKIP').toLowerCase();
+      const sc_class = sc >= 65 ? 'score-h' : sc >= 48 ? 'score-m' : 'score-l';
+      const sym      = s.tokenData?.symbol || '?';
+      const mc       = _usd(s.tokenData?.marketCap  || 0);
+      const liq      = _usd(s.tokenData?.liquidity  || 0);
+      const bs       = (s.tokenData?.buySellRatio   || 0).toFixed(2);
+      const ch1      = (s.tokenData?.priceChange1h  || 0).toFixed(1);
+      const chCol    = (s.tokenData?.priceChange1h  || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+      return `<div class="sig-row sig-row--${act}" data-url="${_esc(s.tokenData?.dexscreenerUrl||'#')}">
+        <span class="sig-sym">${_esc(sym)}</span>
+        <span class="sig-score ${sc_class}">${sc}</span>
+        <span class="sig-meta">MC:${mc} Liq:${liq} B/S:${bs}</span>
+        <span style="font-size:10px;color:${chCol}">${(s.tokenData?.priceChange1h||0)>=0?'+':''}${ch1}%</span>
+        <span class="sig-age">${_ago(s.timestamp)}</span>
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('[data-url]').forEach(r =>
+      r.addEventListener('click', () => window.open(r.dataset.url, '_blank'))
     );
   }
 

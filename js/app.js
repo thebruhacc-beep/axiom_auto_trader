@@ -295,7 +295,8 @@ const App = (() => {
 
   function _refreshDash() {
     _refreshKPIs();
-    const sigs = Storage.getSignals(30).filter(s => s.action !== 'SKIP');
+    // Geef ALLE signalen mee — renderSignalFeed sorteert en filtert zelf
+    const sigs = Storage.getSignals(30);
     UI.renderSignalFeed('dashboard-signals', sigs);
     UI.renderLog('dashboard-log', 60);
   }
