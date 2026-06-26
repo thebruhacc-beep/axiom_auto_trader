@@ -114,12 +114,10 @@ const Scanner = (() => {
       for (const token of tokens) {
         // Snelle pre-filter (geen API nodig)
         if (!token.priceUsd || token.priceUsd <= 0)               { skipped++; continue; }
-        if (token.liquidity        < settings.minLiquidityUsd)    { skipped++; continue; }
-        if (token.volume24h        < settings.minVolume24h)       { skipped++; continue; }
-        if (token.marketCap > 0 && token.marketCap < settings.minMarketCap)  { skipped++; continue; }
-        if (token.marketCap > 0 && token.marketCap > settings.maxMarketCap)  { skipped++; continue; }
-        if (token.ageMinutes > 0  && token.ageMinutes < settings.minAgeMinutes) { skipped++; continue; }
-        if (token.ageMinutes > 0  && token.ageMinutes > settings.maxAgeMinutes) { skipped++; continue; }
+        if (token.liquidity   < settings.minLiquidityUsd)  { skipped++; continue; }
+        if (token.volume24h   < settings.minVolume24h)     { skipped++; continue; }
+        if (token.marketCap > 0 && token.marketCap > settings.maxMarketCap) { skipped++; continue; }
+        if (token.ageMinutes  > settings.maxAgeMinutes)    { skipped++; continue; }
 
         // Veiligheidsanalyse
         let safety;

@@ -1,6 +1,6 @@
 /* ============================================================
-   TOKENFETCHER.JS - Werkende DexScreener endpoints (2025)
-   Gebruikt alleen stabiele, gratis API endpoints
+   TOKENFETCHER.JS - Fix: betere endpoints voor NIEUWE tokens
+   Pump.fun tokens via de juiste DexScreener endpoints
    ============================================================ */
 'use strict';
 
@@ -9,203 +9,228 @@ const TokenFetcher = (() => {
   let _solPrice   = 170;
   let _solPriceAt = 0;
 
-  // Maak fetch met timeout + CORS-vriendelijke headers
-  function _ft(url, ms = 6000) {
-    const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ms);
+  function _ft(url, ms) {
+    ms = ms || 6000;
+    var ctrl  = new AbortController();
+    var timer = setTimeout(function() { ctrl.abort(); }, ms);
     return fetch(url, {
       signal:  ctrl.signal,
       headers: { 'Accept': 'application/json' },
-      mode:    'cors',
-    }).finally(() => clearTimeout(timer));
+    }).finally(function() { clearTimeout(timer); });
   }
 
-  // ── SOL PRIJS ─────────────────────────────────────────────
   async function getSolPrice() {
-    if (Date.now() - _solPriceAt < 90000) return _solPrice;
+    if (Date.now() - _solPriceAt < 120000) return _solPrice;
     try {
-      // Gebruik DexScreener zelf voor SOL prijs (geen CORS issues)
-      const r = await _ft('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111112', 5000);
+      // Simpele SOL prijs via DexScreener USDC pair
+      var r = await _ft('https://api.dexscreener.com/latest/dex/pairs/solana/58oQChx4yWmvKn3NeRJBb7drN5Gj1M1tBQKwcHDRPsc4', 4000);
       if (r.ok) {
-        const d = await r.json();
-        const sol = (d.pairs || []).find(p => p.quoteToken?.symbol === 'USDC' || p.quoteToken?.symbol === 'USDT');
-        if (sol?.priceUsd) _solPrice = parseFloat(sol.priceUsd);
+        var d = await r.json();
+        if (d.pair && d.pair.priceUsd) {
+          _solPrice = parseFloat(d.pair.priceUsd);
+        }
       }
-    } catch { /* gebruik cache */ }
+    } catch(e) { /* gebruik cache */ }
     _solPriceAt = Date.now();
     return _solPrice;
   }
 
-  // ── DEXSCREENER ENDPOINTS ─────────────────────────────────
-  // Endpoint 1: Zoek op "solana" met verschillende queries
-  async function _fetchByQuery(query) {
+  // ── DEXSCREENER: haal NIEUWE pairs op gesorteerd op aanmaakdatum ──
+  // Dit is het sleutel endpoint voor verse pump.fun tokens
+  async function _fetchNewPumpFunPairs() {
     try {
-      const url = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`;
-      const r   = await _ft(url, 7000);
+      // Zoek specifiek op "pump" voor pump.fun tokens
+      var r = await _ft('https://api.dexscreener.com/latest/dex/search?q=pump', 8000);
       if (!r.ok) return [];
-      const d = await r.json();
-      return (d.pairs || []).filter(p =>
-        p.chainId === 'solana' &&
-        (p.liquidity?.usd || 0) > 1000 &&
-        parseFloat(p.priceUsd || '0') > 0
-      );
-    } catch (e) {
-      console.warn('[TokenFetcher] query fout:', query, e.name);
+      var d = await r.json();
+      var pairs = (d.pairs || []).filter(function(p) {
+        return p.chainId === 'solana' &&
+               (p.liquidity && p.liquidity.usd > 0) &&
+               parseFloat(p.priceUsd || '0') > 0 &&
+               p.pairCreatedAt && (Date.now() - p.pairCreatedAt) < 24 * 60 * 60 * 1000;
+      });
+      // Sorteer op nieuwste eerst
+      pairs.sort(function(a, b) { return (b.pairCreatedAt || 0) - (a.pairCreatedAt || 0); });
+      return pairs.slice(0, 30);
+    } catch(e) {
+      console.warn('[TokenFetcher] pump query fout:', e.name);
       return [];
     }
   }
 
-  // Endpoint 2: Haal pairs op via token adres (betrouwbaarst)
-  async function _fetchByAddress(address) {
+  // Zoek op trending Solana tokens
+  async function _fetchTrendingSolana() {
     try {
-      const r = await _ft(`https://api.dexscreener.com/latest/dex/tokens/${address}`, 5000);
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (!d.pairs?.length) return null;
-      // Neem de pair met hoogste liquiditeit
-      return d.pairs
-        .filter(p => p.chainId === 'solana' && (p.liquidity?.usd || 0) > 0)
-        .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0] || null;
-    } catch { return null; }
+      var r = await _ft('https://api.dexscreener.com/latest/dex/search?q=solana', 8000);
+      if (!r.ok) return [];
+      var d = await r.json();
+      return (d.pairs || []).filter(function(p) {
+        return p.chainId === 'solana' &&
+               (p.liquidity && p.liquidity.usd > 2000) &&
+               parseFloat(p.priceUsd || '0') > 0 &&
+               // Alleen tokens jonger dan 48 uur
+               p.pairCreatedAt && (Date.now() - p.pairCreatedAt) < 48 * 60 * 60 * 1000;
+      }).slice(0, 20);
+    } catch(e) { return []; }
   }
 
-  // Bekende actieve Solana meme token adressen als fallback
-  // Dit zorgt ervoor dat er altijd iets te scannen is
-  const KNOWN_TOKENS = [
-    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
-    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', // WIF
-    'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5',  // MEW
-    'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3', // PYTH
-    '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', // POPCAT
-    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',  // BOME
-    'A8C3xuqscfmyLrte3VmTqrAq8kgMASius9AFNANwpump',  // FWOG
-    'Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump',  // CHILLGUY
-  ];
+  // Haal boosted/trending tokens op (gratis endpoint)
+  async function _fetchBoosted() {
+    try {
+      var r = await _ft('https://api.dexscreener.com/token-boosts/latest/v1', 6000);
+      if (!r.ok) return [];
+      var items = await r.json();
+      if (!Array.isArray(items)) return [];
+      
+      var solItems = items
+        .filter(function(i) { return i.chainId === 'solana'; })
+        .slice(0, 10);
+      
+      // Haal pair data op voor elk token (parallel)
+      var results = await Promise.allSettled(
+        solItems.map(function(item) {
+          return _ft('https://api.dexscreener.com/latest/dex/tokens/' + item.tokenAddress, 5000)
+            .then(function(r) { return r.ok ? r.json() : null; });
+        })
+      );
+      
+      var pairs = [];
+      results.forEach(function(res) {
+        if (res.status !== 'fulfilled' || !res.value || !res.value.pairs) return;
+        var best = res.value.pairs
+          .filter(function(p) { return p.chainId === 'solana' && (p.liquidity && p.liquidity.usd > 0); })
+          .sort(function(a, b) { return (b.liquidity.usd || 0) - (a.liquidity.usd || 0); })[0];
+        if (best) pairs.push(best);
+      });
+      return pairs;
+    } catch(e) { return []; }
+  }
 
-  // ── RUGCHECK ──────────────────────────────────────────────
+  // ── RUGCHECK (met kortere timeout) ────────────────────────
   async function _fetchRugCheck(address) {
     try {
-      const r = await _ft(
-        `https://api.rugcheck.xyz/v1/tokens/${address}/report/summary`,
-        3500
-      );
-      if (!r.ok) return _defaultRug();
-      const d       = await r.json();
-      const holders = (d.topHolders || []).sort((a, b) => b.pct - a.pct);
+      var r = await _ft('https://api.rugcheck.xyz/v1/tokens/' + address + '/report/summary', 3000);
+      if (!r.ok) return null;
+      var d = await r.json();
+      if (!d) return null;
+      var holders = (d.topHolders || []).sort(function(a, b) { return b.pct - a.pct; });
       return {
-        score:                d.score                || 50,
-        largestHolderPercent: holders[0]?.pct        || 0,
-        topHolderPercent:     holders.slice(0,10).reduce((s,h) => s + (h.pct||0), 0),
-        isLiquidityLocked:    (d.markets||[]).some(m => (m.lpLockedPct||0) > 80),
+        score:                d.score || 50,
+        largestHolderPercent: holders[0] ? holders[0].pct : 0,
+        topHolderPercent:     holders.slice(0,10).reduce(function(s, h) { return s + (h.pct || 0); }, 0),
+        isLiquidityLocked:    (d.markets || []).some(function(m) { return (m.lpLockedPct || 0) > 80; }),
       };
-    } catch { return _defaultRug(); }
-  }
-
-  function _defaultRug() {
-    return { score: 50, largestHolderPercent: 15, topHolderPercent: 35, isLiquidityLocked: false };
+    } catch(e) { return null; }
   }
 
   // ── PAIR → TOKEN OBJECT ───────────────────────────────────
   function _pairToToken(pair, rug) {
-    const addr    = pair.baseToken?.address;
+    var addr  = pair.baseToken && pair.baseToken.address;
     if (!addr) return null;
-
-    const buys24  = pair.txns?.h24?.buys  || 0;
-    const sells24 = pair.txns?.h24?.sells || 0;
-    const buys5m  = pair.txns?.m5?.buys   || 0;
-    const sells5m = pair.txns?.m5?.sells  || 0;
-    const created = pair.pairCreatedAt    || (Date.now() - 2 * 60 * 60 * 1000);
-    const ageMins = Math.max(0, (Date.now() - created) / 60000);
-    const txPerMin= buys5m + sells5m > 0 ? (buys5m + sells5m) / Math.min(ageMins || 5, 5) : 0;
-    const bsRatio = sells24 > 0 ? buys24 / sells24 : buys24 > 0 ? 5 : 1;
-    const price   = parseFloat(pair.priceUsd || '0');
-
+    var price = parseFloat(pair.priceUsd || '0');
     if (price <= 0) return null;
+
+    var buys24  = (pair.txns && pair.txns.h24 && pair.txns.h24.buys)  || 0;
+    var sells24 = (pair.txns && pair.txns.h24 && pair.txns.h24.sells) || 0;
+    var buys5m  = (pair.txns && pair.txns.m5  && pair.txns.m5.buys)   || 0;
+    var sells5m = (pair.txns && pair.txns.m5  && pair.txns.m5.sells)  || 0;
+    var created = pair.pairCreatedAt || (Date.now() - 60 * 60 * 1000);
+    var ageMins = Math.max(0.1, (Date.now() - created) / 60000);
+    var txPerMin= (buys5m + sells5m) / Math.min(ageMins, 5);
+    var bsRatio = sells24 > 0 ? buys24 / sells24 : (buys24 > 0 ? 5 : 1);
+
+    // Als RugCheck beschikbaar is, gebruik die data
+    // Anders: schat holder data op basis van andere metrics
+    var largestHolder = rug ? rug.largestHolderPercent : 0;
+    var topHolder     = rug ? rug.topHolderPercent     : 0;
+    var rugScore      = rug ? rug.score                : 50;
+    var liqLocked     = rug ? rug.isLiquidityLocked    : false;
+
+    // Schat holderCount als we geen data hebben
+    // Basis: meer buys = meer holders (ruwe schatting)
+    var estHolderCount = rug && largestHolder > 0
+      ? Math.round(100 / Math.max(largestHolder, 0.5)) * 3
+      : Math.max(30, Math.round(buys24 / 3));
 
     return {
       address:              addr,
-      symbol:               (pair.baseToken?.symbol || '???').toUpperCase().slice(0, 10),
-      name:                 (pair.baseToken?.name   || 'Unknown').slice(0, 30),
-      marketCap:            pair.marketCap    || pair.fdv           || 0,
-      liquidity:            pair.liquidity?.usd                     || 0,
-      volume24h:            pair.volume?.h24                        || 0,
-      volume5m:             pair.volume?.m5                         || 0,
+      symbol:               ((pair.baseToken && pair.baseToken.symbol) || '???').toUpperCase().slice(0,12),
+      name:                 ((pair.baseToken && pair.baseToken.name)   || 'Unknown').slice(0,30),
+      marketCap:            pair.marketCap || pair.fdv || 0,
+      liquidity:            (pair.liquidity && pair.liquidity.usd) || 0,
+      volume24h:            (pair.volume && pair.volume.h24) || 0,
+      volume5m:             (pair.volume && pair.volume.m5)  || 0,
       priceUsd:             price,
-      priceChange5m:        pair.priceChange?.m5                    || 0,
-      priceChange1h:        pair.priceChange?.h1                    || 0,
-      priceChange24h:       pair.priceChange?.h24                   || 0,
-      holderCount:          rug.largestHolderPercent > 0
-                              ? Math.round(100 / Math.max(rug.largestHolderPercent, 0.5)) * 3
-                              : 100,
-      topHolderPercent:     rug.topHolderPercent,
-      largestHolderPercent: rug.largestHolderPercent,
+      priceChange5m:        (pair.priceChange && pair.priceChange.m5)  || 0,
+      priceChange1h:        (pair.priceChange && pair.priceChange.h1)  || 0,
+      priceChange24h:       (pair.priceChange && pair.priceChange.h24) || 0,
+      holderCount:          estHolderCount,
+      topHolderPercent:     topHolder,
+      largestHolderPercent: largestHolder,
       buyCount24h:          buys24,
       sellCount24h:         sells24,
       buySellRatio:         Math.min(Math.max(bsRatio, 0), 20),
       createdAt:            created,
       ageMinutes:           ageMins,
       txPerMinute:          txPerMin,
-      isLiquidityLocked:    rug.isLiquidityLocked,
-      rugCheckScore:        rug.score,
-      dexscreenerUrl:       pair.url || `https://dexscreener.com/solana/${addr}`,
+      isLiquidityLocked:    liqLocked,
+      rugCheckScore:        rugScore,
+      hasRealRugCheck:      !!rug, // flag of we echte data hebben
+      dexscreenerUrl:       pair.url || ('https://dexscreener.com/solana/' + addr),
       pairAddress:          pair.pairAddress || addr,
     };
   }
 
   // ── HOOFD SCANFUNCTIE ─────────────────────────────────────
   async function scanAll() {
-    const t0 = Date.now();
+    var t0 = Date.now();
 
-    // Haal pairs op via meerdere queries parallel
-    const queries = ['solana meme', 'pump fun', 'solana new'];
-    const [q1, q2, q3, knownPairs] = await Promise.allSettled([
-      _fetchByQuery(queries[0]),
-      _fetchByQuery(queries[1]),
-      _fetchByQuery(queries[2]),
-      // Haal ook bekende tokens op als baseline
-      Promise.all(KNOWN_TOKENS.slice(0, 4).map(addr => _fetchByAddress(addr))),
+    // Haal 3 type endpoints parallel op
+    var results = await Promise.allSettled([
+      _fetchNewPumpFunPairs(),
+      _fetchTrendingSolana(),
+      _fetchBoosted(),
     ]);
 
-    const allPairs = [
-      ...(q1.status === 'fulfilled' ? q1.value : []),
-      ...(q2.status === 'fulfilled' ? q2.value : []),
-      ...(q3.status === 'fulfilled' ? q3.value : []),
-      ...(knownPairs.status === 'fulfilled' ? knownPairs.value.filter(Boolean) : []),
-    ];
+    var allPairs = [];
+    results.forEach(function(res) {
+      if (res.status === 'fulfilled' && res.value) {
+        allPairs = allPairs.concat(res.value);
+      }
+    });
 
     // Dedupliceer op adres
-    const seen   = new Set();
-    const unique = allPairs.filter(p => {
-      const a = p.baseToken?.address;
+    var seen   = new Set();
+    var unique = allPairs.filter(function(p) {
+      var a = p.baseToken && p.baseToken.address;
       if (!a || seen.has(a)) return false;
       seen.add(a);
       return true;
     });
 
-    if (unique.length === 0) {
-      Storage.addLog('warning', 'Geen pairs gevonden — DexScreener mogelijk tijdelijk onbereikbaar');
+    Storage.addLog('info', unique.length + ' unieke pairs gevonden (' + (Date.now()-t0) + 'ms)');
+
+    if (!unique.length) {
+      Storage.addLog('warning', 'DexScreener gaf 0 pairs terug — API mogelijk tijdelijk down');
       return [];
     }
 
-    Storage.addLog('info', `${unique.length} unieke pairs gevonden (${Date.now()-t0}ms)`);
-
-    // Haal RugCheck data parallel op (max 3 sec per token)
-    const rugResults = await Promise.allSettled(
-      unique.map(p => _fetchRugCheck(p.baseToken?.address || ''))
+    // RugCheck PARALLEL voor alle tokens (met timeout)
+    var rugResults = await Promise.allSettled(
+      unique.map(function(p) {
+        return _fetchRugCheck(p.baseToken && p.baseToken.address || '');
+      })
     );
 
-    // Verwerk naar token objecten
-    const tokens = [];
-    for (let i = 0; i < unique.length; i++) {
-      const rug   = rugResults[i].status === 'fulfilled' && rugResults[i].value
-        ? rugResults[i].value
-        : _defaultRug();
-      const token = _pairToToken(unique[i], rug);
+    // Bouw token objecten
+    var tokens = [];
+    for (var i = 0; i < unique.length; i++) {
+      var rug   = (rugResults[i].status === 'fulfilled') ? rugResults[i].value : null;
+      var token = _pairToToken(unique[i], rug);
       if (token) tokens.push(token);
     }
 
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    Storage.addLog('info', `Scan klaar: ${tokens.length} tokens verwerkt in ${elapsed}s`);
+    Storage.addLog('info', 'Verwerkt: ' + tokens.length + ' tokens in ' + ((Date.now()-t0)/1000).toFixed(1) + 's | RugCheck: ' + rugResults.filter(function(r){ return r.status === 'fulfilled' && r.value; }).length + '/' + unique.length);
 
     return tokens;
   }

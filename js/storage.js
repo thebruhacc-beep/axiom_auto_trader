@@ -39,27 +39,30 @@ const Storage = (() => {
   // 0.01 SOL ≈ $1.70 bij SOL = $170
   // Doel: 0.01 SOL groeien naar 2 SOL (200x)
   // Per trade 0.003 SOL — fees ~6% roundtrip = $0.03 per trade (acceptabel)
+  // 0.01 SOL → 200x challenge
+  // 0.01 SOL ≈ $1.70 bij SOL=$170
   const DEFAULT_SETTINGS = {
     tradingMode:          'paper',
-    startingCapital:      0.01,    // $1.70 startkapitaal
-    tradeAmount:          0.003,   // $0.51 per trade — fees ~6% = $0.03
-    maxOpenPositions:     2,       // Max 2 posities tegelijk
+    startingCapital:      0.01,
+    tradeAmount:          0.003,   // $0.51 per trade — fees ~6% = $0.03 acceptabel
+    maxOpenPositions:     2,
     stopLossPercent:      20,      // -20% SL → netto -26% na fees
     takeProfit1Percent:   60,      // +60% TP1 50% exit → netto +54%
     takeProfit2Percent:   200,     // +200% TP2 rest → netto +194%
-    minScore:             62,      // Iets lager voor meer kansen
-    minLiquidityUsd:      5000,    // Min $5K — anders slippage te groot
-    minHolders:           25,
-    maxTopHolderPercent:  25,
-    minVolume24h:         2000,
-    minMarketCap:         3000,
-    maxMarketCap:         5000000, // Max $5M mcap — early stage
-    minAgeMinutes:        3,
-    maxAgeMinutes:        720,     // Max 12 uur oud
+    minScore:             55,      // VERLAAGD van 65 naar 55 (realistisch zonder Birdeye)
+    minLiquidityUsd:      3000,    // Verlaagd — nieuwe pump tokens hebben vaak $3-10K liq
+    minHolders:           0,       // Verwijderd — holderCount is geschat, niet betrouwbaar
+    maxTopHolderPercent:  30,      // Iets hoger — nieuwe tokens hebben vaker grotere holders
+    minVolume24h:         1000,    // Verlaagd voor gloednieuwe tokens
+    minMarketCap:         1000,    // Verlaagd
+    maxMarketCap:         10000000,// Verhoogd naar $10M — meer kansen
+    minAgeMinutes:        2,       // Verlaagd — pump tokens kunnen snel gaan
+    maxAgeMinutes:        2880,    // Verhoogd naar 48 uur — meer kandidaten
     heliusApiKey:         '',
     birdeyeApiKey:        '',
-    scanIntervalSeconds:  25,
+    scanIntervalSeconds:  30,
   };
+
 
 
   function _get(key) {

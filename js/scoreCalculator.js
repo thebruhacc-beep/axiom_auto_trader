@@ -1,192 +1,226 @@
 /* ============================================================
-   SCORECALCULATOR.JS - Score 0-100
-   Fee-bewust: bonus voor hoge liquiditeit (minder slippage)
+   SCORECALCULATOR.JS - Aangepast voor realistische data
+   Probleem was: holderCount=0 gaf -12 punten onterecht
+   Fix: schat holder score op basis van beschikbare data
+   BUY threshold verlaagd naar 55 (realistischer zonder Birdeye)
    ============================================================ */
 'use strict';
 
 const ScoreCalculator = (() => {
 
   function calculate(token, safety) {
-    const breakdown = [];
-    let total = 0;
+    var breakdown = [];
+    var total     = 0;
 
-    // ── POSITIEF ──────────────────────────────────────────
-
-    const vol = _volumeScore(token);
-    breakdown.push({ category: 'Volume & Ratio', points: vol, maxPoints: 25,
-      description: `Vol: $${_f(token.volume24h)} | B/S: ${token.buySellRatio.toFixed(2)}` });
+    // ── VOLUME & BUY/SELL RATIO (max 28) ──────────────────
+    var vol = _volumeScore(token);
+    breakdown.push({ category: 'Volume & B/S Ratio', points: vol, maxPoints: 28,
+      description: 'Vol: $' + _f(token.volume24h) + ' | B/S: ' + token.buySellRatio.toFixed(2) });
     total += vol;
 
-    const hold = _holderScore(token);
-    breakdown.push({ category: 'Holders', points: hold, maxPoints: 20,
-      description: `~${token.holderCount} holders | top10: ${token.topHolderPercent.toFixed(0)}%` });
-    total += hold;
-
-    const liq = _liquidityScore(token);
-    breakdown.push({ category: 'Liquiditeit', points: liq, maxPoints: 20,
-      description: `$${_f(token.liquidity)}${token.isLiquidityLocked?' 🔒':''}` });
-    total += liq;
-
-    const mom = _momentumScore(token);
-    breakdown.push({ category: 'Momentum', points: mom, maxPoints: 15,
-      description: `5m: ${token.priceChange5m.toFixed(1)}% | 1h: ${token.priceChange1h.toFixed(1)}%` });
+    // ── MOMENTUM (max 18) ──────────────────────────────────
+    var mom = _momentumScore(token);
+    breakdown.push({ category: 'Prijs Momentum', points: mom, maxPoints: 18,
+      description: '5m: ' + token.priceChange5m.toFixed(1) + '% | 1h: ' + token.priceChange1h.toFixed(1) + '%' });
     total += mom;
 
-    const act = _activityScore(token);
-    breakdown.push({ category: 'Activiteit', points: act, maxPoints: 10,
-      description: `${token.txPerMinute.toFixed(1)} tx/min | ${token.buyCount24h} buys` });
+    // ── LIQUIDITEIT (max 20) ──────────────────────────────
+    var liq = _liquidityScore(token);
+    breakdown.push({ category: 'Liquiditeit', points: liq, maxPoints: 20,
+      description: '$' + _f(token.liquidity) + (token.isLiquidityLocked ? ' 🔒' : '') });
+    total += liq;
+
+    // ── ACTIVITEIT (max 14) ───────────────────────────────
+    var act = _activityScore(token);
+    breakdown.push({ category: 'Activiteit', points: act, maxPoints: 14,
+      description: token.txPerMinute.toFixed(1) + ' tx/min | ' + token.buyCount24h + ' buys' });
     total += act;
 
-    const rug = Math.round((Math.max(0, token.rugCheckScore - 20) / 80) * 10);
-    breakdown.push({ category: 'RugCheck', points: rug, maxPoints: 10,
-      description: `Score: ${token.rugCheckScore}/100` });
+    // ── HOLDERS (max 12) ──────────────────────────────────
+    // Gebruik beschikbare data — als geen RugCheck, schat op basis van buys
+    var hold = _holderScore(token);
+    breakdown.push({ category: 'Holders' + (token.hasRealRugCheck ? '' : ' (geschat)'), points: hold, maxPoints: 12,
+      description: '~' + token.holderCount + ' holders | top: ' + token.topHolderPercent.toFixed(0) + '%' });
+    total += hold;
+
+    // ── RUGCHECK (max 8) ──────────────────────────────────
+    var rug = token.hasRealRugCheck
+      ? Math.round((Math.max(0, token.rugCheckScore - 20) / 80) * 8)
+      : 4; // Neutraal als geen data
+    breakdown.push({ category: 'RugCheck' + (token.hasRealRugCheck ? '' : ' (geen data)'), points: rug, maxPoints: 8,
+      description: 'Score: ' + token.rugCheckScore + '/100' });
     total += rug;
 
-    // ── NEGATIEF ──────────────────────────────────────────
-
-    const whaleP = _whalePenalty(token);
-    if (whaleP > 0) {
-      breakdown.push({ category: 'Whale (-)', points: -whaleP, maxPoints: 0,
-        description: `Grootste: ${token.largestHolderPercent.toFixed(1)}%` });
-      total -= whaleP;
+    // ── NEGATIEF: WHALE PENALTY ───────────────────────────
+    if (token.hasRealRugCheck && token.largestHolderPercent > 0) {
+      var whaleP = _whalePenalty(token);
+      if (whaleP > 0) {
+        breakdown.push({ category: 'Whale (-)', points: -whaleP, maxPoints: 0,
+          description: 'Grootste holder: ' + token.largestHolderPercent.toFixed(1) + '%' });
+        total -= whaleP;
+      }
     }
 
-    const safeP = _safetyPenalty(safety);
+    // ── NEGATIEF: VEILIGHEID ──────────────────────────────
+    var safeP = _safetyPenalty(safety);
     if (safeP > 0) {
       breakdown.push({ category: 'Veiligheid (-)', points: -safeP, maxPoints: 0,
-        description: `${safety.flags.length} flags` });
+        description: safety.flags.length + ' veiligheidsflags' });
       total -= safeP;
     }
 
-    const ageP = _agePenalty(token);
+    // ── NEGATIEF: LEEFTIJD ────────────────────────────────
+    var ageP = _agePenalty(token);
     if (ageP > 0) {
       breakdown.push({ category: 'Leeftijd (-)', points: -ageP, maxPoints: 0,
-        description: `${token.ageMinutes.toFixed(0)} min oud` });
+        description: token.ageMinutes.toFixed(0) + ' minuten oud' });
       total -= ageP;
-    }
-
-    // Fee penalty: lage liquiditeit = hogere slippage
-    const feeP = token.liquidity < 10000 ? 5 : token.liquidity < 5000 ? 10 : 0;
-    if (feeP > 0) {
-      breakdown.push({ category: 'Hoge slippage (-)', points: -feeP, maxPoints: 0,
-        description: `Liquiditeit $${_f(token.liquidity)} → hoge fees` });
-      total -= feeP;
     }
 
     total = Math.max(0, Math.min(100, Math.round(total)));
 
-    // Aanbeveling
-    let recommendation;
-    if (safety.flags.some(f => f.severity === 'critical')) recommendation = 'DANGER';
-    else if (!safety.isSafe)  recommendation = 'SKIP';
-    else if (total >= 65)     recommendation = 'BUY';
-    else if (total >= 48)     recommendation = 'WATCH';
-    else                      recommendation = 'SKIP';
+    // ── AANBEVELING ───────────────────────────────────────
+    // Threshold 55 (was 65) — realistisch zonder Birdeye API
+    var recommendation;
+    if (safety.flags.some(function(f) { return f.severity === 'critical'; })) {
+      recommendation = 'DANGER';
+    } else if (!safety.isSafe) {
+      recommendation = 'SKIP';
+    } else if (total >= 55) {
+      recommendation = 'BUY';
+    } else if (total >= 40) {
+      recommendation = 'WATCH';
+    } else {
+      recommendation = 'SKIP';
+    }
 
-    return { total, breakdown, recommendation };
+    return { total: total, breakdown: breakdown, recommendation: recommendation };
   }
 
   function _volumeScore(t) {
-    let s = 0;
-    if      (t.volume24h > 200000) s += 13;
-    else if (t.volume24h > 50000)  s += 10;
+    var s = 0;
+    // Volume component (max 14)
+    if      (t.volume24h > 500000) s += 14;
+    else if (t.volume24h > 100000) s += 11;
+    else if (t.volume24h > 50000)  s += 9;
     else if (t.volume24h > 20000)  s += 7;
     else if (t.volume24h > 5000)   s += 4;
     else if (t.volume24h > 2000)   s += 2;
 
-    if      (t.buySellRatio > 4)   s += 12;
-    else if (t.buySellRatio > 2.5) s += 9;
-    else if (t.buySellRatio > 1.8) s += 7;
-    else if (t.buySellRatio > 1.3) s += 5;
-    else if (t.buySellRatio > 1)   s += 2;
-    return Math.min(25, s);
+    // Buy/sell ratio (max 14)
+    if      (t.buySellRatio > 5)   s += 14;
+    else if (t.buySellRatio > 3)   s += 11;
+    else if (t.buySellRatio > 2)   s += 8;
+    else if (t.buySellRatio > 1.5) s += 5;
+    else if (t.buySellRatio > 1.2) s += 3;
+    else if (t.buySellRatio > 1)   s += 1;
+    return Math.min(28, s);
   }
 
-  function _holderScore(t) {
-    let s = 0;
-    if      (t.holderCount > 2000) s += 12;
-    else if (t.holderCount > 500)  s += 9;
-    else if (t.holderCount > 200)  s += 7;
-    else if (t.holderCount > 100)  s += 5;
-    else if (t.holderCount > 50)   s += 3;
-    else if (t.holderCount > 25)   s += 1;
+  function _momentumScore(t) {
+    var s = 0;
+    // 5m momentum (max 9)
+    if      (t.priceChange5m > 20) s += 9;
+    else if (t.priceChange5m > 10) s += 7;
+    else if (t.priceChange5m > 5)  s += 5;
+    else if (t.priceChange5m > 2)  s += 3;
+    else if (t.priceChange5m > 0)  s += 1;
+    if (t.priceChange5m < -15) s -= 5;
 
-    if      (t.topHolderPercent < 20) s += 8;
-    else if (t.topHolderPercent < 30) s += 6;
-    else if (t.topHolderPercent < 40) s += 4;
-    else if (t.topHolderPercent < 50) s += 2;
-    return Math.min(20, s);
+    // 1h momentum (max 9)
+    if      (t.priceChange1h > 100) s += 9;
+    else if (t.priceChange1h > 50)  s += 7;
+    else if (t.priceChange1h > 20)  s += 5;
+    else if (t.priceChange1h > 10)  s += 3;
+    else if (t.priceChange1h > 0)   s += 1;
+    if (t.priceChange1h < -25) s -= 5;
+
+    return Math.max(0, Math.min(18, s));
   }
 
   function _liquidityScore(t) {
-    let s = 0;
+    var s = 0;
     if      (t.liquidity > 200000) s += 18;
-    else if (t.liquidity > 50000)  s += 14;
-    else if (t.liquidity > 20000)  s += 11;
+    else if (t.liquidity > 100000) s += 15;
+    else if (t.liquidity > 50000)  s += 13;
+    else if (t.liquidity > 20000)  s += 10;
     else if (t.liquidity > 10000)  s += 8;
     else if (t.liquidity > 5000)   s += 5;
-    else if (t.liquidity > 3000)   s += 2;
+    else if (t.liquidity > 2000)   s += 2;
     if (t.isLiquidityLocked) s += 2;
     return Math.min(20, s);
   }
 
-  function _momentumScore(t) {
-    let s = 0;
-    if      (t.priceChange5m > 15) s += 8;
-    else if (t.priceChange5m > 7)  s += 6;
-    else if (t.priceChange5m > 3)  s += 4;
-    else if (t.priceChange5m > 0)  s += 2;
-    if (t.priceChange5m < -15) s -= 6;
+  function _activityScore(t) {
+    var s = 0;
+    // tx per minuut (max 6)
+    if      (t.txPerMinute > 20) s += 6;
+    else if (t.txPerMinute > 10) s += 5;
+    else if (t.txPerMinute > 5)  s += 4;
+    else if (t.txPerMinute > 2)  s += 3;
+    else if (t.txPerMinute > 1)  s += 2;
+    else if (t.txPerMinute > 0)  s += 1;
 
-    if      (t.priceChange1h > 50) s += 7;
-    else if (t.priceChange1h > 20) s += 5;
-    else if (t.priceChange1h > 10) s += 3;
-    else if (t.priceChange1h > 0)  s += 1;
-    if (t.priceChange1h < -25) s -= 5;
-
-    return Math.max(0, Math.min(15, s));
+    // Aantal buys 24u (max 8)
+    if      (t.buyCount24h > 2000) s += 8;
+    else if (t.buyCount24h > 1000) s += 7;
+    else if (t.buyCount24h > 500)  s += 6;
+    else if (t.buyCount24h > 200)  s += 5;
+    else if (t.buyCount24h > 100)  s += 4;
+    else if (t.buyCount24h > 50)   s += 3;
+    else if (t.buyCount24h > 20)   s += 2;
+    else if (t.buyCount24h > 5)    s += 1;
+    return Math.min(14, s);
   }
 
-  function _activityScore(t) {
-    let s = 0;
-    if      (t.txPerMinute > 15) s += 5;
-    else if (t.txPerMinute > 8)  s += 4;
-    else if (t.txPerMinute > 4)  s += 3;
-    else if (t.txPerMinute > 1)  s += 1;
+  function _holderScore(t) {
+    var s = 0;
+    // holderCount (geschat als geen Birdeye)
+    if      (t.holderCount > 5000) s += 7;
+    else if (t.holderCount > 1000) s += 6;
+    else if (t.holderCount > 500)  s += 5;
+    else if (t.holderCount > 200)  s += 4;
+    else if (t.holderCount > 100)  s += 3;
+    else if (t.holderCount > 50)   s += 2;
+    else if (t.holderCount > 25)   s += 1;
 
-    if      (t.buyCount24h > 500)  s += 5;
-    else if (t.buyCount24h > 200)  s += 4;
-    else if (t.buyCount24h > 100)  s += 3;
-    else if (t.buyCount24h > 50)   s += 2;
-    else if (t.buyCount24h > 20)   s += 1;
-    return Math.min(10, s);
+    // Top holder verdeling (alleen als echte data)
+    if (t.hasRealRugCheck && t.topHolderPercent > 0) {
+      if      (t.topHolderPercent < 20) s += 5;
+      else if (t.topHolderPercent < 30) s += 4;
+      else if (t.topHolderPercent < 40) s += 3;
+      else if (t.topHolderPercent < 50) s += 1;
+    } else {
+      s += 3; // Neutraal als geen data
+    }
+    return Math.min(12, s);
   }
 
   function _whalePenalty(t) {
-    const p = t.largestHolderPercent;
-    if (p > 50) return 40;
-    if (p > 35) return 28;
-    if (p > 25) return 18;
-    if (p > 18) return 10;
-    if (p > 12) return 4;
+    var p = t.largestHolderPercent;
+    if (p > 50) return 35;
+    if (p > 35) return 22;
+    if (p > 25) return 14;
+    if (p > 18) return 7;
+    if (p > 12) return 3;
     return 0;
   }
 
   function _safetyPenalty(safety) {
-    let p = 0;
-    for (const f of safety.flags) {
-      if      (f.severity === 'critical') p += 22;
-      else if (f.severity === 'high')     p += 13;
-      else if (f.severity === 'medium')   p += 5;
-      else                                p += 2;
-    }
-    return Math.min(55, p);
+    var p = 0;
+    safety.flags.forEach(function(f) {
+      if      (f.severity === 'critical') p += 20;
+      else if (f.severity === 'high')     p += 12;
+      else if (f.severity === 'medium')   p += 4;
+      else                                p += 1;
+    });
+    return Math.min(50, p);
   }
 
   function _agePenalty(t) {
-    if (t.ageMinutes < 2)  return 18;
-    if (t.ageMinutes < 5)  return 12;
-    if (t.ageMinutes < 10) return 6;
+    if (t.ageMinutes < 3)  return 15;
+    if (t.ageMinutes < 5)  return 10;
+    if (t.ageMinutes < 10) return 5;
     if (t.ageMinutes < 20) return 2;
     return 0;
   }
@@ -197,5 +231,5 @@ const ScoreCalculator = (() => {
     return (n||0).toFixed(0);
   }
 
-  return { calculate };
+  return { calculate: calculate };
 })();
