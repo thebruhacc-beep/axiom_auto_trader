@@ -163,8 +163,9 @@ const Scanner = (() => {
         // Check 1: Blacklist (cooldown na stop loss — voorkomt herhaald kopen dalende coin)
         var blCheck = Storage.isBlacklisted(token.address);
 
-        // Check 2: Trend filter — koop niet als coin de afgelopen uur sterk daalt
-        var trendOk = !settings.requirePositiveTrend || token.priceChange1h > -5;
+        // Check 2: Trend filter — alleen blokkeren bij sterke neerwaartse trend
+        // -5% was te streng voor memecoins, -25% is realistischer
+        var trendOk = !settings.requirePositiveTrend || token.priceChange1h > -25;
 
         if (!blCheck && score.recommendation === 'BUY' && score.total >= settings.minScore && safety.isSafe && trendOk) {
           buySignals.push(signal);

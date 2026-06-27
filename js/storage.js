@@ -50,14 +50,14 @@ const Storage = (() => {
     stopLossPercent:      15,      // VERLAAGD 20→15: sneller uitstappen bij verlies
     takeProfit1Percent:   60,
     takeProfit2Percent:   200,
-    minScore:             60,      // VERHOOGD 55→60: strenger voor betere kwaliteit
-    minLiquidityUsd:      5000,    // VERHOOGD 3000→5000: minder risico
+    minScore:             55,      // 55 — goed evenwicht kwaliteit vs kansen
+    minLiquidityUsd:      3000,    // $3K minimum — nieuwe memecoins hebben vaak weinig liq
     minHolders:           0,
     maxTopHolderPercent:  25,
-    minVolume24h:         2000,
-    minMarketCap:         5000,    // VERHOOGD: vermijd te kleine coins
+    minVolume24h:         1000,    // Verlaagd — verse tokens hebben nog weinig volume
+    minMarketCap:         2000,    // Laag — kleine gems zijn doel van challenge
     maxMarketCap:         10000000,
-    minAgeMinutes:        5,       // VERHOOGD 2→5: vermijd te nieuwe coins
+    minAgeMinutes:        3,       // 3 min minimum — snel genoeg voor pump detectie
     maxAgeMinutes:        2880,
     // Cooldown na stop loss (minuten) — voorkomt herhaald kopen dalende coin
     slCooldownMinutes:    90,
