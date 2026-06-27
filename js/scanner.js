@@ -106,12 +106,20 @@ const Scanner = (() => {
         if (t.priceUsd > 0) _priceMap.set(t.address, t.priceUsd);
       }
 
-      // Open posities die niet in scan zitten krijgen hun laatste prijs
-      // zodat de UI niet bevriest
-      const openNow = Storage.getOpenTrades();
-      for (const ot of openNow) {
-        if (!_priceMap.has(ot.tokenAddress) && ot.currentPrice > 0) {
-          _priceMap.set(ot.tokenAddress, ot.currentPrice);
+      // Haal verse prijzen op voor open posities die niet in scan zaten
+      // PriceRefresher doet dit via aparte DexScreener calls per token
+      if (typeof PriceRefresher !== 'undefined') {
+        var freshPrices = await PriceRefresher.refreshOpenPositions();
+        freshPrices.forEach(function(price, addr) {
+          _priceMap.set(addr, price);
+        });
+      } else {
+        // Fallback: gebruik laatste bekende prijs
+        const openNow = Storage.getOpenTrades();
+        for (const ot of openNow) {
+          if (!_priceMap.has(ot.tokenAddress) && ot.currentPrice > 0) {
+            _priceMap.set(ot.tokenAddress, ot.currentPrice);
+          }
         }
       }
 

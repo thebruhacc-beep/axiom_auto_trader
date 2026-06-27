@@ -31,6 +31,22 @@ const App = (() => {
     _refreshUI();
     _refreshTimer = setInterval(_refreshUI, 5000); // Elke 5s voor live posities
 
+    // Aparte timer voor prijs refresh van open posities (elke 15 sec)
+    // Dit zorgt dat % niet bevriest ook als scanner langzaam is
+    setInterval(async function() {
+      var openTrades = Storage.getOpenTrades();
+      if (!openTrades.length) return;
+      if (typeof PriceRefresher !== 'undefined') {
+        await PriceRefresher.updatePositionPrices();
+        // Herrender posities als die pagina actief is
+        if (_currentPage === 'positions') {
+          UI.renderOpenPositions(_onClosePos);
+        }
+        // Update KPIs altijd
+        _refreshKPIs();
+      }
+    }, 15000);
+
     Storage.addLog('info', '🚀 Axiom Scanner geladen — klik Start Scanner');
     console.log('[App] Axiom Scanner klaar');
   }
