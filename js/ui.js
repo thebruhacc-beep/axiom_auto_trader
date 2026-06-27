@@ -454,6 +454,7 @@ const UI = (() => {
     _val('s-max-age',        s.maxAgeMinutes);
     _val('s-helius',         s.heliusApiKey);
     _val('s-birdeye',        s.birdeyeApiKey);
+    _val('s-sl-cooldown',    s.slCooldownMinutes || 90);
 
     // Fee info box
     var fees   = Storage.getFees();
@@ -491,6 +492,7 @@ const UI = (() => {
     cur.maxAgeMinutes       = _num('s-max-age');
     cur.heliusApiKey        = _str('s-helius');
     cur.birdeyeApiKey       = _str('s-birdeye');
+    cur.slCooldownMinutes   = _num('s-sl-cooldown') || 90;
     return cur;
   }
 

@@ -101,9 +101,18 @@ const Scanner = (() => {
 
       _scanCount += tokens.length;
 
-      // Update prijsmap
+      // Update prijsmap met verse prijzen
       for (const t of tokens) {
         if (t.priceUsd > 0) _priceMap.set(t.address, t.priceUsd);
+      }
+
+      // Open posities die niet in scan zitten krijgen hun laatste prijs
+      // zodat de UI niet bevriest
+      const openNow = Storage.getOpenTrades();
+      for (const ot of openNow) {
+        if (!_priceMap.has(ot.tokenAddress) && ot.currentPrice > 0) {
+          _priceMap.set(ot.tokenAddress, ot.currentPrice);
+        }
       }
 
       // STAP 3: Analyseer elk token
@@ -151,11 +160,13 @@ const Scanner = (() => {
         signals.push(signal);
 
         // STAP 4: Voer trade uit als criterium gehaald
-        if (
-          score.recommendation === 'BUY' &&
-          score.total >= settings.minScore &&
-          safety.isSafe
-        ) {
+        // Check 1: Blacklist (cooldown na stop loss — voorkomt herhaald kopen dalende coin)
+        var blCheck = Storage.isBlacklisted(token.address);
+
+        // Check 2: Trend filter — koop niet als coin de afgelopen uur sterk daalt
+        var trendOk = !settings.requirePositiveTrend || token.priceChange1h > -5;
+
+        if (!blCheck && score.recommendation === 'BUY' && score.total >= settings.minScore && safety.isSafe && trendOk) {
           buySignals.push(signal);
 
           if (settings.tradingMode === 'paper') {

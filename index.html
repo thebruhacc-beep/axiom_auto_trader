@@ -314,7 +314,8 @@
     <div class="page" id="page-settings">
       <div class="page-header">
         <h1>Instellingen</h1>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn--ghost" id="btn-clear-blacklist">🚫 Wis Blacklist</button>
           <button class="btn btn--ghost" id="btn-reset-portfolio">🔄 Reset Portfolio</button>
           <button class="btn btn--primary" id="btn-save-settings">💾 Opslaan</button>
         </div>
@@ -366,6 +367,11 @@
             <div class="form-group">
               <label>Min. Score (0-100)</label>
               <input type="number" id="s-min-score" class="input-field" min="0" max="100"/>
+            </div>
+            <div class="form-group">
+              <label>SL Cooldown (minuten)</label>
+              <input type="number" id="s-sl-cooldown" class="input-field" min="0" max="1440" value="90"/>
+              <small style="color:var(--text3);font-size:10px">Blokkeert coin na stop loss voor X minuten</small>
             </div>
           </div>
           <!-- Dynamische fee calculator -->

@@ -55,8 +55,8 @@ const TradeManager = (() => {
     const openTrades = Storage.getOpenTrades();
 
     // Dubbele positie check (zelfde token al open?)
-    if (openTrades.find(t => t.tokenAddress === signal.tokenData.address)) {
-      Storage.addLog('info', `Al een positie open in ${signal.tokenData.symbol}, skip`);
+    // Stil controleren op duplicaat (tokenFetcher filtert al open tokens weg)
+    if (openTrades.find(function(t) { return t.tokenAddress === signal.tokenData.address; })) {
       return null;
     }
 
@@ -168,8 +168,12 @@ const TradeManager = (() => {
     const toClose   = [];
 
     for (const trade of openTrades) {
-      const current = priceMap.get(trade.tokenAddress);
-      if (!current || current <= 0) continue; // Geen prijs beschikbaar
+      let current = priceMap.get(trade.tokenAddress);
+      // Als geen verse prijs: gebruik laatste bekende prijs (minimaal refreshen)
+      if (!current || current <= 0) {
+        current = trade.currentPrice || 0;
+        if (!current || current <= 0) continue;
+      }
 
       trade.currentPrice   = current;
       trade.pnlPercent     = ((current - trade.entryPrice) / trade.entryPrice) * 100;
@@ -186,6 +190,12 @@ const TradeManager = (() => {
       if (current <= trade.stopLossPrice) {
         _executeClose(trade, current, 'CLOSED_STOPLOSS', portfolio, solPrice);
         toClose.push(trade.id);
+        const slSettings = Storage.getSettings();
+        Storage.addToBlacklist(
+          trade.tokenAddress,
+          trade.tokenSymbol,
+          slSettings.slCooldownMinutes || 90
+        );
         Storage.addLog('warning',
           `🛑 STOP LOSS: ${trade.tokenSymbol} | ` +
           `Bruto: ${trade.pnlPercent.toFixed(1)}% | ` +

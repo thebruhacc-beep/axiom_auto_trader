@@ -29,7 +29,7 @@ const App = (() => {
     UI.loadSettingsIntoForm();
     await _tryRestoreWallet();
     _refreshUI();
-    _refreshTimer = setInterval(_refreshUI, 8000);
+    _refreshTimer = setInterval(_refreshUI, 5000); // Elke 5s voor live posities
 
     Storage.addLog('info', '🚀 Axiom Scanner geladen — klik Start Scanner');
     console.log('[App] Axiom Scanner klaar');
@@ -214,6 +214,11 @@ const App = (() => {
       if (Scanner.isRunning()) { Scanner.stop(); setTimeout(() => Scanner.start(), 300); }
     });
 
+    document.getElementById('btn-clear-blacklist')?.addEventListener('click', () => {
+      Storage.clearBlacklist();
+      UI.toast('Blacklist gewist — alle coins kunnen weer gekocht worden', 'info');
+    });
+
     document.getElementById('btn-reset-portfolio')?.addEventListener('click', () => {
       if (!confirm('Portfolio resetten naar startkapitaal? Alle trades worden gewist.')) return;
       Storage.resetPortfolio();
@@ -283,7 +288,11 @@ const App = (() => {
   function _refreshUI() {
     _refreshKPIs();
     if (_currentPage === 'dashboard')  _refreshDash();
-    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
+    // Posities altijd refreshen (ook op andere pagina's) voor live PnL
+    if (_currentPage === 'positions') {
+      UI.renderOpenPositions(_onClosePos);
+      UI.renderTradeHistory();
+    }
   }
 
   function _refreshKPIs() {

@@ -41,27 +41,33 @@ const Storage = (() => {
   // Per trade 0.003 SOL — fees ~6% roundtrip = $0.03 per trade (acceptabel)
   // 0.01 SOL → 200x challenge
   // 0.01 SOL ≈ $1.70 bij SOL=$170
+  // 0.01 SOL → 200x challenge - verbeterde instellingen na analyse
   const DEFAULT_SETTINGS = {
     tradingMode:          'paper',
     startingCapital:      0.01,
-    tradeAmount:          0.003,   // $0.51 per trade — fees ~6% = $0.03 acceptabel
+    tradeAmount:          0.003,
     maxOpenPositions:     2,
-    stopLossPercent:      20,      // -20% SL → netto -26% na fees
-    takeProfit1Percent:   60,      // +60% TP1 50% exit → netto +54%
-    takeProfit2Percent:   200,     // +200% TP2 rest → netto +194%
-    minScore:             55,      // VERLAAGD van 65 naar 55 (realistisch zonder Birdeye)
-    minLiquidityUsd:      3000,    // Verlaagd — nieuwe pump tokens hebben vaak $3-10K liq
-    minHolders:           0,       // Verwijderd — holderCount is geschat, niet betrouwbaar
-    maxTopHolderPercent:  30,      // Iets hoger — nieuwe tokens hebben vaker grotere holders
-    minVolume24h:         1000,    // Verlaagd voor gloednieuwe tokens
-    minMarketCap:         1000,    // Verlaagd
-    maxMarketCap:         10000000,// Verhoogd naar $10M — meer kansen
-    minAgeMinutes:        2,       // Verlaagd — pump tokens kunnen snel gaan
-    maxAgeMinutes:        2880,    // Verhoogd naar 48 uur — meer kandidaten
+    stopLossPercent:      15,      // VERLAAGD 20→15: sneller uitstappen bij verlies
+    takeProfit1Percent:   60,
+    takeProfit2Percent:   200,
+    minScore:             60,      // VERHOOGD 55→60: strenger voor betere kwaliteit
+    minLiquidityUsd:      5000,    // VERHOOGD 3000→5000: minder risico
+    minHolders:           0,
+    maxTopHolderPercent:  25,
+    minVolume24h:         2000,
+    minMarketCap:         5000,    // VERHOOGD: vermijd te kleine coins
+    maxMarketCap:         10000000,
+    minAgeMinutes:        5,       // VERHOOGD 2→5: vermijd te nieuwe coins
+    maxAgeMinutes:        2880,
+    // Cooldown na stop loss (minuten) — voorkomt herhaald kopen dalende coin
+    slCooldownMinutes:    90,
+    // Trend filter — koop niet als prijs dalend
+    requirePositiveTrend: true,
     heliusApiKey:         '',
     birdeyeApiKey:        '',
     scanIntervalSeconds:  30,
   };
+
 
 
 
@@ -171,6 +177,30 @@ const Storage = (() => {
 
   function clearSignals() { _set(KEYS.SIGNALS, []); }
 
+  // ── BLACKLIST (cooldown na stop loss) ─────────────────────
+  // Slaat op: { address: string, unlocksAt: number }
+  function getBlacklist() { return _get('axiom_blacklist') || []; }
+
+  function addToBlacklist(tokenAddress, tokenSymbol, cooldownMinutes) {
+    var bl = getBlacklist().filter(function(b) { return b.address !== tokenAddress; });
+    bl.push({
+      address:   tokenAddress,
+      symbol:    tokenSymbol,
+      unlocksAt: Date.now() + cooldownMinutes * 60 * 1000,
+    });
+    _set('axiom_blacklist', bl);
+    addLog('warning', '⏳ COOLDOWN: ' + tokenSymbol + ' geblokkeerd voor ' + cooldownMinutes + ' min na stop loss');
+  }
+
+  function isBlacklisted(tokenAddress) {
+    var now = Date.now();
+    var bl  = getBlacklist().filter(function(b) { return b.unlocksAt > now; });
+    _set('axiom_blacklist', bl); // Schoon verlopen entries op
+    return bl.some(function(b) { return b.address === tokenAddress; });
+  }
+
+  function clearBlacklist() { _set('axiom_blacklist', []); }
+
   function getWallet() {
     return _get(KEYS.WALLET) || { isConnected: false, publicKey: null, balance: null };
   }
@@ -191,5 +221,6 @@ const Storage = (() => {
     getLogs, addLog, clearLogs,
     getSignals, addSignal, clearSignals,
     getWallet, saveWallet,
+    getBlacklist, addToBlacklist, isBlacklisted, clearBlacklist,
   };
 })();
