@@ -28,11 +28,19 @@ const Storage = (() => {
 
   // ── FEE CONSTANTEN ────────────────────────────────────────
   // Worden gebruikt door tradeManager voor realistische simulatie
+  // ── ECHTE FEES via Phantom + Jupiter ─────────────────────
+  // Jupiter routing is GRATIS, DEX fee is 0.25% per swap
+  // Bij directe Phantom trades zonder Axiom UI:
+  //   - Jupiter aggregator: 0% fee
+  //   - DEX fee (Raydium/Orca): 0.25% per swap
+  //   - Netwerk fee: ~0.000005 SOL per tx
+  //   - Slippage bij $5K+ liq: ~0.1%
+  //   - Totaal roundtrip: ~0.7% (was 6% — 8x goedkoper!)
   const FEES = {
-    networkFeeSOL:    0.000005, // ~$0.001 vaste Solana tx fee
-    axiomFeePct:      0.01,     // 1% Axiom platform fee
-    slippagePct:      0.02,     // 2% slippage (conservatief voor kleine liquidity)
-    totalRoundtripPct:0.06,     // ~6% totaal heen+terug (buy+sell fees+slippage)
+    networkFeeSOL:    0.000005,  // ~$0.001 vaste Solana tx fee
+    axiomFeePct:      0.0025,    // 0.25% DEX fee (Raydium/Orca via Jupiter)
+    slippagePct:      0.001,     // 0.1% slippage bij normale liquiditeit
+    totalRoundtripPct:0.007,     // ~0.7% totaal heen+terug (realistisch)
   };
 
   // 0.01 SOL → 200x challenge
