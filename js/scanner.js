@@ -133,8 +133,12 @@ const Scanner = (() => {
         if (!token.priceUsd || token.priceUsd <= 0)               { skipped++; continue; }
         if (token.liquidity   < settings.minLiquidityUsd)  { skipped++; continue; }
         if (token.volume24h   < settings.minVolume24h)     { skipped++; continue; }
+        if (token.marketCap > 0 && token.marketCap < settings.minMarketCap) { skipped++; continue; }
         if (token.marketCap > 0 && token.marketCap > settings.maxMarketCap) { skipped++; continue; }
         if (token.ageMinutes  > settings.maxAgeMinutes)    { skipped++; continue; }
+        // Buy/sell ratio filter — alleen coins met meer kopers dan verkopers
+        var minBS = settings.minBuySellRatio || 1.2;
+        if (token.buySellRatio < minBS) { skipped++; continue; }
 
         // Veiligheidsanalyse
         let safety;

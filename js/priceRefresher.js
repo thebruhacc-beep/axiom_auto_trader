@@ -12,9 +12,12 @@ const PriceRefresher = (() => {
   var CACHE_TTL = 20000; // 20 seconden cache
 
   // Haal prijs op voor één token via DexScreener
-  async function _fetchPrice(tokenAddress) {
+  // Haal prijs op via pairAddress (exacte pair) of tokenAddress (fallback)
+  async function _fetchPrice(tokenAddress, pairAddress) {
+    var cacheKey = pairAddress || tokenAddress;
+
     // Check cache eerst
-    var cached = _cache.get(tokenAddress);
+    var cached = _cache.get(cacheKey);
     if (cached && (Date.now() - cached.fetchedAt) < CACHE_TTL) {
       return cached.price;
     }
@@ -23,28 +26,39 @@ const PriceRefresher = (() => {
       var ctrl  = new AbortController();
       var timer = setTimeout(function() { ctrl.abort(); }, 5000);
 
-      var r = await fetch(
-        'https://api.dexscreener.com/latest/dex/tokens/' + tokenAddress,
-        { signal: ctrl.signal, headers: { 'Accept': 'application/json' } }
-      ).finally(function() { clearTimeout(timer); });
+      // Gebruik pairAddress als beschikbaar — dit geeft EXACT de juiste pair terug
+      // Voorkomt valse SL triggers door andere pairs met andere prijs
+      var url = pairAddress && pairAddress !== tokenAddress
+        ? 'https://api.dexscreener.com/latest/dex/pairs/solana/' + pairAddress
+        : 'https://api.dexscreener.com/latest/dex/tokens/' + tokenAddress;
+
+      var r = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { 'Accept': 'application/json' },
+      }).finally(function() { clearTimeout(timer); });
 
       if (!r.ok) return null;
-
       var d = await r.json();
-      if (!d.pairs || !d.pairs.length) return null;
 
-      // Neem pair met hoogste liquiditeit op Solana
-      var best = d.pairs
-        .filter(function(p) { return p.chainId === 'solana' && parseFloat(p.priceUsd || '0') > 0; })
-        .sort(function(a, b) { return (b.liquidity && b.liquidity.usd || 0) - (a.liquidity && a.liquidity.usd || 0); })[0];
+      var price = 0;
 
-      if (!best) return null;
-
-      var price = parseFloat(best.priceUsd || '0');
-      if (price > 0) {
-        _cache.set(tokenAddress, { price: price, fetchedAt: Date.now() });
+      // Pairs endpoint geeft { pair: {...} }
+      if (d.pair && d.pair.priceUsd) {
+        price = parseFloat(d.pair.priceUsd);
       }
-      return price > 0 ? price : null;
+      // Tokens endpoint geeft { pairs: [...] }
+      else if (d.pairs && d.pairs.length) {
+        var best = d.pairs
+          .filter(function(p) { return p.chainId === 'solana' && parseFloat(p.priceUsd || '0') > 0; })
+          .sort(function(a, b) { return (b.liquidity && b.liquidity.usd || 0) - (a.liquidity && a.liquidity.usd || 0); })[0];
+        if (best) price = parseFloat(best.priceUsd || '0');
+      }
+
+      if (price > 0) {
+        _cache.set(cacheKey, { price: price, fetchedAt: Date.now() });
+        return price;
+      }
+      return null;
 
     } catch(e) {
       return null;
@@ -60,7 +74,8 @@ const PriceRefresher = (() => {
     // Parallel alle prijzen ophalen
     var results = await Promise.allSettled(
       openTrades.map(function(trade) {
-        return _fetchPrice(trade.tokenAddress);
+        // Gebruik pairAddress voor exacte prijs — voorkomt valse SL
+        return _fetchPrice(trade.tokenAddress, trade.pairAddress);
       })
     );
 

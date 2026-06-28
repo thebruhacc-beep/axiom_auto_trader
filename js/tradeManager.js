@@ -125,6 +125,7 @@ const TradeManager = (() => {
       breakEvenPrice,
       scoreAtEntry:     signal.scoreResult.total,
       dexUrl:           signal.tokenData.dexscreenerUrl,
+      pairAddress:      signal.tokenData.pairAddress || signal.tokenData.address,
       marketCapAtEntry: signal.tokenData.marketCap,
       solPriceAtEntry:  solPrice,
       // Fee samenvatting

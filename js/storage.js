@@ -42,31 +42,34 @@ const Storage = (() => {
   // 0.01 SOL → 200x challenge
   // 0.01 SOL ≈ $1.70 bij SOL=$170
   // 0.01 SOL → 200x challenge - verbeterde instellingen na analyse
+  // 0.01 SOL → 200x challenge - winstgevende instellingen
+  // Doel: winrate 35%+ zodat expectancy positief is
   const DEFAULT_SETTINGS = {
     tradingMode:          'paper',
     startingCapital:      0.01,
     tradeAmount:          0.003,
     maxOpenPositions:     2,
-    stopLossPercent:      15,      // VERLAAGD 20→15: sneller uitstappen bij verlies
+    stopLossPercent:      15,
     takeProfit1Percent:   60,
     takeProfit2Percent:   200,
-    minScore:             55,      // 55 — goed evenwicht kwaliteit vs kansen
-    minLiquidityUsd:      3000,    // $3K minimum — nieuwe memecoins hebben vaak weinig liq
+    // STRENGER: hogere kwaliteitsbalk voor betere winrate
+    minScore:             62,
+    minLiquidityUsd:      8000,    // $8K min — minder rug pulls, eerlijkere prijs
     minHolders:           0,
     maxTopHolderPercent:  25,
-    minVolume24h:         1000,    // Verlaagd — verse tokens hebben nog weinig volume
-    minMarketCap:         2000,    // Laag — kleine gems zijn doel van challenge
+    minVolume24h:         5000,    // $5K min — actieve markt
+    minMarketCap:         50000,   // $50K min — voorkomt rug pulls zoals BULLIEVE
     maxMarketCap:         10000000,
-    minAgeMinutes:        3,       // 3 min minimum — snel genoeg voor pump detectie
+    minAgeMinutes:        5,
     maxAgeMinutes:        2880,
-    // Cooldown na stop loss (minuten) — voorkomt herhaald kopen dalende coin
-    slCooldownMinutes:    90,
-    // Trend filter — koop niet als prijs dalend
+    minBuySellRatio:      1.5,     // NIEUW: meer kopers dan verkopers verplicht
+    slCooldownMinutes:    120,     // 120 min cooldown (was 90)
     requirePositiveTrend: true,
     heliusApiKey:         '',
     birdeyeApiKey:        '',
     scanIntervalSeconds:  30,
   };
+
 
 
 
