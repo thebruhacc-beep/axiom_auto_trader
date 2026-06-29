@@ -189,6 +189,15 @@ const TradeManager = (() => {
 
       // ── STOP LOSS ───────────────────────────────────────
       if (current <= trade.stopLossPrice) {
+        // Live trade: voer echte sell uit via Jupiter
+        if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          Storage.addLog('warning', '🛑 LIVE STOP LOSS: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
+          try {
+            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 300);
+          } catch(e) {
+            Storage.addLog('error', 'Live SL sell mislukt: ' + e.message);
+          }
+        }
         _executeClose(trade, current, 'CLOSED_STOPLOSS', portfolio, solPrice);
         toClose.push(trade.id);
         const slSettings = Storage.getSettings();
@@ -212,6 +221,17 @@ const TradeManager = (() => {
         trade.partialExitTime     = Date.now();
         trade.partialExitPrice    = current;
 
+        // Live trade: verkoop 50% via Jupiter
+        if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          Storage.addLog('success', '💰 LIVE TP1 (50%): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
+          try {
+            const halfTokens = trade.tokenAmount * 0.5;
+            await Wallet.executeSell(trade.tokenAddress, halfTokens, 6, 150);
+          } catch(e) {
+            Storage.addLog('error', 'Live TP1 sell mislukt: ' + e.message);
+          }
+        }
+
         // Bereken opbrengst van 50% positie
         const halfAmountSOL      = trade.amountSol * 0.5;
         const halfSellFee        = _calcFees(halfAmountSOL, false);
@@ -230,6 +250,16 @@ const TradeManager = (() => {
 
       // ── TAKE PROFIT 2: verkoop rest ───────────────────────
       if (current >= trade.takeProfitPrice2 && trade.isPartiallyExited) {
+        // Live trade: verkoop resterende 50% via Jupiter
+        if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          Storage.addLog('success', '🚀 LIVE TP2 (rest): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
+          try {
+            const restTokens = trade.tokenAmount * 0.5;
+            await Wallet.executeSell(trade.tokenAddress, restTokens, 6, 150);
+          } catch(e) {
+            Storage.addLog('error', 'Live TP2 sell mislukt: ' + e.message);
+          }
+        }
         _executeClose(trade, current, 'CLOSED_PROFIT', portfolio, solPrice, true);
         toClose.push(trade.id);
         Storage.addLog('success',
@@ -316,6 +346,76 @@ const TradeManager = (() => {
       `${trade.pnlPercent.toFixed(1)}% bruto | netto na fees: ${trade.pnlSol.toFixed(5)} SOL`
     );
     return true;
+  }
+
+  // ── OPEN LIVE TRADE (na succesvolle Jupiter swap) ─────────
+  async function openLiveTrade(signal, settings, swapResult) {
+    const portfolio  = Storage.getPortfolio();
+    const openTrades = Storage.getOpenTrades();
+    const solPrice   = 170; // Gebruik vaste prijs als fallback
+
+    // Dubbele positie check
+    if (openTrades.find(function(t) { return t.tokenAddress === signal.tokenData.address; })) {
+      return null;
+    }
+
+    const entry       = signal.tokenData.priceUsd;
+    const amountSol   = settings.tradeAmount;
+    const fees        = Storage.getFees();
+    const buyFeeSOL   = amountSol * (fees.axiomFeePct + fees.slippagePct) + fees.networkFeeSOL;
+    const tokenAmount = swapResult.outAmount || ((amountSol * solPrice) / entry);
+
+    const trade = {
+      id:               'live_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      tokenAddress:     signal.tokenData.address,
+      tokenSymbol:      signal.tokenData.symbol,
+      tokenName:        signal.tokenData.name,
+      entryPrice:       entry,
+      currentPrice:     entry,
+      amountSol:        amountSol,
+      buyFeeSOL:        buyFeeSOL,
+      tokenAmount:      tokenAmount,
+      entryTime:        Date.now(),
+      status:           'OPEN',
+      pnlUsd:           0,
+      pnlSol:           0,
+      pnlPercent:       0,
+      pnlPercentAfterFees: 0,
+      isPartiallyExited: false,
+      isPaper:          false, // LIVE trade!
+      stopLossPrice:    entry * (1 - settings.stopLossPercent   / 100),
+      takeProfitPrice1: entry * (1 + settings.takeProfit1Percent / 100),
+      takeProfitPrice2: entry * (1 + settings.takeProfit2Percent / 100),
+      breakEvenPrice:   entry * (1 + (fees.axiomFeePct + fees.slippagePct) * 2),
+      scoreAtEntry:     signal.scoreResult.total,
+      dexUrl:           signal.tokenData.dexscreenerUrl,
+      pairAddress:      signal.tokenData.pairAddress || signal.tokenData.address,
+      txHash:           swapResult.signature,
+      feeInfo: {
+        buyFeeSOL,
+        estimatedSellFeeSOL:   amountSol * (fees.axiomFeePct + fees.slippagePct),
+        totalEstimatedFeeSOL:  buyFeeSOL + amountSol * (fees.axiomFeePct + fees.slippagePct),
+        feePctOfTrade:         (buyFeeSOL / amountSol) * 100,
+        breakEvenPct:          (fees.axiomFeePct + fees.slippagePct) * 2 * 100,
+      },
+    };
+
+    openTrades.push(trade);
+    Storage.saveOpenTrades(openTrades);
+
+    portfolio.currentBalance -= (amountSol + buyFeeSOL);
+    portfolio.totalFeesPaid   = (portfolio.totalFeesPaid || 0) + buyFeeSOL;
+    portfolio.totalTrades++;
+    Storage.savePortfolio(portfolio);
+
+    Storage.addLog('success',
+      '🔴 LIVE TRADE OPEN: ' + signal.tokenData.symbol +
+      ' | $' + _fmtP(entry) +
+      ' | ' + amountSol + ' SOL' +
+      ' | Tx: ' + String(swapResult.signature).slice(0,12) + '...'
+    );
+
+    return trade;
   }
 
   function _fmtP(p) {

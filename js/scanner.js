@@ -183,38 +183,60 @@ const Scanner = (() => {
           buySignals.push(signal);
 
           if (settings.tradingMode === 'paper') {
+            // ── PAPER TRADE ───────────────────────────────────
             try {
               const trade = await TradeManager.openPaperTrade(signal, settings);
               if (trade) {
                 Storage.addLog('success',
-                  `✅ PAPER TRADE GEOPEND: ${token.symbol} | ` +
-                  `Score: ${score.total} | ` +
-                  `$${_fmtP(token.priceUsd)} | ` +
-                  `${settings.tradeAmount} SOL`
+                  '✅ PAPER KOOP: ' + token.symbol +
+                  ' | Score: ' + score.total +
+                  ' | $' + _fmtP(token.priceUsd) +
+                  ' | ' + settings.tradeAmount + ' SOL'
                 );
                 if (_onSignal) _onSignal(signal, trade);
               }
             } catch(e) {
-              Storage.addLog('error', 'Trade open fout: ' + e.message);
+              Storage.addLog('error', 'Paper trade fout: ' + e.message);
             }
+
           } else {
-            // Live trading
+            // ── LIVE TRADE via Jupiter + Phantom ──────────────
             if (typeof Wallet !== 'undefined' && Wallet.isConnected()) {
               Storage.addLog('info',
-                `🔴 LIVE SIGNAAL: ${token.symbol} score ${score.total} — ` +
-                `open Axiom voor uitvoering`
+                '🔴 LIVE KOOP STARTEN: ' + token.symbol +
+                ' | Score: ' + score.total +
+                ' | ' + settings.tradeAmount + ' SOL'
               );
-              // Open Axiom.trade op dit token
               try {
-                window.open(`https://axiom.trade/meme/${token.pairAddress}`, '_blank');
-              } catch(e) { /* popup geblokkeerd */ }
+                // Controleer saldo voor trade
+                const balance = await Wallet.getBalance();
+                if (balance < settings.tradeAmount + 0.002) {
+                  Storage.addLog('warning',
+                    '⚠️ Onvoldoende saldo: ' + balance.toFixed(5) +
+                    ' SOL (nodig: ' + (settings.tradeAmount + 0.002).toFixed(3) + ' SOL voor fees)'
+                  );
+                } else {
+                  // Voer echte Jupiter swap uit
+                  const result = await Wallet.executeSwap(
+                    token.address,
+                    settings.tradeAmount,
+                    100 // 1% slippage tolerance
+                  );
+
+                  if (result && result.signature) {
+                    // Registreer als live trade in portfolio
+                    const liveTrade = await TradeManager.openLiveTrade(signal, settings, result);
+                    if (_onSignal) _onSignal(signal, liveTrade);
+                  }
+                }
+              } catch(e) {
+                Storage.addLog('error', '❌ Live trade mislukt: ' + (e.message || e));
+              }
             } else {
               Storage.addLog('warning',
-                `⚠️ Koopsignaal ${token.symbol} (${score.total}) — ` +
-                `verbind wallet voor live trading`
+                '⚠️ Koopsignaal ' + token.symbol + ' maar wallet niet verbonden'
               );
             }
-            if (_onSignal) _onSignal(signal, null);
           }
         }
       }
