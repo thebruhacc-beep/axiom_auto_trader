@@ -31,21 +31,30 @@ const App = (() => {
     _refreshUI();
     _refreshTimer = setInterval(_refreshUI, 5000); // Elke 5s voor live posities
 
-    // Aparte timer voor prijs refresh van open posities (elke 15 sec)
-    // Dit zorgt dat % niet bevriest ook als scanner langzaam is
+    // Prijs refresh van open posities (elke 15 sec)
     setInterval(async function() {
       var openTrades = Storage.getOpenTrades();
       if (!openTrades.length) return;
       if (typeof PriceRefresher !== 'undefined') {
         await PriceRefresher.updatePositionPrices();
-        // Herrender posities als die pagina actief is
-        if (_currentPage === 'positions') {
-          UI.renderOpenPositions(_onClosePos);
-        }
-        // Update KPIs altijd
+        if (_currentPage === 'positions') UI.renderOpenPositions(_onClosePos);
         _refreshKPIs();
       }
     }, 15000);
+
+    // Wallet balance refresh (elke 30 sec als verbonden)
+    setInterval(async function() {
+      if (typeof Wallet === 'undefined' || !Wallet.isConnected()) return;
+      try {
+        const balance = await Wallet.getBalance();
+        if (balance > 0) {
+          var w = Storage.getWallet();
+          w.balance = balance;
+          Storage.saveWallet(w);
+          UI.updateWalletUI(w);
+        }
+      } catch(e) { /* stil falen */ }
+    }, 30000);
 
     Storage.addLog('info', '🚀 Axiom Scanner geladen — klik Start Scanner');
     console.log('[App] Axiom Scanner klaar');

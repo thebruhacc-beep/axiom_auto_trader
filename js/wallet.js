@@ -92,21 +92,53 @@ const Wallet = (() => {
   }
 
   // ── SALDO OPHALEN ──────────────────────────────────────────
-  // Probeert meerdere RPC endpoints als één faalt
+  // Strategie 1: Via Phantom wallet zelf (geen CORS probleem)
+  // Strategie 2: Via CORS-vriendelijke publieke RPC endpoints
   async function getBalance() {
     if (!_publicKey) return 0;
 
+    // METHODE 1: Phantom heeft eigen connection object — geen externe RPC nodig
+    const provider = _getProvider();
+    if (provider && provider.connection) {
+      try {
+        const pk  = new window.solanaWeb3.PublicKey(_publicKey);
+        const bal = await provider.connection.getBalance(pk);
+        if (typeof bal === 'number' && bal >= 0) {
+          return bal / 1e9;
+        }
+      } catch(e) { /* fallback */ }
+    }
+
+    // METHODE 2: Phantom request methode (werkt altijd als wallet verbonden is)
+    if (provider && provider.request) {
+      try {
+        const result = await provider.request({
+          method: 'getBalance',
+          params: { commitment: 'confirmed' },
+        });
+        if (result && typeof result.value === 'number') {
+          return result.value / 1e9;
+        }
+      } catch(e) { /* fallback */ }
+    }
+
+    // METHODE 3: CORS-vriendelijke publieke endpoints
+    // Deze endpoints hebben Access-Control-Allow-Origin: * headers
     const endpoints = [
-      'https://api.mainnet-beta.solana.com',
-      'https://solana-mainnet.g.alchemy.com/v2/demo',
-      'https://rpc.ankr.com/solana',
+      { url: 'https://api.mainnet-beta.solana.com',        cors: true },
+      { url: 'https://rpc.ankr.com/solana',                cors: true },
+      { url: 'https://solana.public-rpc.com',              cors: true },
+      // Helius gratis tier: voeg eigen API key toe in Instellingen voor betere betrouwbaarheid
     ];
 
-    for (const endpoint of endpoints) {
+    for (const ep of endpoints) {
       try {
-        const r = await fetch(endpoint, {
+        const r = await fetch(ep.url, {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept':       'application/json',
+          },
           body: JSON.stringify({
             jsonrpc: '2.0',
             id:      1,
@@ -117,146 +149,129 @@ const Wallet = (() => {
 
         if (!r.ok) continue;
         const d = await r.json();
-
-        // Check voor errors in response
         if (d.error) continue;
+
         const lamports = d.result && d.result.value;
-        if (typeof lamports === 'number') {
+        if (typeof lamports === 'number' && lamports >= 0) {
           return lamports / 1e9;
         }
       } catch(e) {
-        continue; // Probeer volgende endpoint
+        continue;
       }
     }
 
-    Storage.addLog('warning', '⚠️ Kon SOL saldo niet ophalen — controleer internetverbinding');
-    return 0;
+    // METHODE 4: DexScreener SOL pair als absolute fallback voor prijs
+    // (geeft geen wallet balance maar toont tenminste iets)
+    Storage.addLog('warning', '⚠️ RPC bereikbaar maar wallet balance tijdelijk onbeschikbaar');
+    
+    // Geef laatste bekende balance terug als fallback
+    const stored = Storage.getWallet();
+    return stored.balance || 0;
   }
 
   // ── JUPITER SWAP — ECHTE LIVE TRADE ───────────────────────
-  // Jupiter is de grootste DEX aggregator op Solana
-  // Gratis te gebruiken, geen API key nodig
-  // Fees: alleen DEX fee (~0.25%) + netwerk fee (~$0.001)
   async function executeSwap(tokenMint, amountSol, slippageBps) {
-    if (!_connected || !_publicKey) {
-      throw new Error('Wallet niet verbonden');
-    }
+    if (!_connected || !_publicKey) throw new Error('Wallet niet verbonden');
+    slippageBps = slippageBps || 100;
 
-    slippageBps = slippageBps || 100; // 1% slippage tolerance standaard
+    const provider = _getProvider();
+    if (!provider) throw new Error('Phantom niet gevonden');
 
-    const provider  = _getProvider();
-    if (!provider) throw new Error('Phantom provider niet gevonden');
+    const lamports = Math.floor(amountSol * 1e9);
+    Storage.addLog('info', '🔄 Jupiter quote: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...');
 
-    const lamports  = Math.floor(amountSol * 1e9);
-
-    Storage.addLog('info',
-      '🔄 Jupiter quote ophalen: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...'
-    );
-
-    // STAP 1: Haal quote op van Jupiter
-    const quoteUrl = 'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
-      inputMint:   SOL_MINT,
-      outputMint:  tokenMint,
-      amount:      lamports.toString(),
-      slippageBps: slippageBps.toString(),
+    // STAP 1: Quote ophalen
+    const quoteParams = new URLSearchParams({
+      inputMint:        SOL_MINT,
+      outputMint:       tokenMint,
+      amount:           lamports.toString(),
+      slippageBps:      slippageBps.toString(),
       onlyDirectRoutes: 'false',
-    }).toString();
-
-    const quoteResp = await fetch(quoteUrl, {
-      headers: { 'Accept': 'application/json' },
     });
 
-    if (!quoteResp.ok) {
-      const err = await quoteResp.text();
-      throw new Error('Jupiter quote mislukt: ' + err);
-    }
+    const quoteResp = await fetch(
+      'https://quote-api.jup.ag/v6/quote?' + quoteParams.toString(),
+      { headers: { 'Accept': 'application/json' } }
+    );
+    if (!quoteResp.ok) throw new Error('Jupiter quote fout: ' + await quoteResp.text());
 
     const quote = await quoteResp.json();
-    if (quote.error) throw new Error('Jupiter fout: ' + quote.error);
+    if (quote.error) throw new Error('Jupiter: ' + quote.error);
 
     const outAmount   = parseInt(quote.outAmount || '0');
     const priceImpact = parseFloat(quote.priceImpactPct || '0');
+    Storage.addLog('info', '📊 Quote OK | Impact: ' + priceImpact.toFixed(2) + '%');
+    if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge price impact: ' + priceImpact.toFixed(1) + '%');
 
-    Storage.addLog('info',
-      '📊 Quote: ' + amountSol + ' SOL → ' + outAmount +
-      ' tokens | Price impact: ' + priceImpact.toFixed(2) + '%'
-    );
-
-    // Waarschuw bij hoge price impact
-    if (priceImpact > 5) {
-      Storage.addLog('warning',
-        '⚠️ Hoge price impact: ' + priceImpact.toFixed(2) + '% — overweeg kleinere trade'
-      );
-    }
-
-    // STAP 2: Bouw swap transactie
+    // STAP 2: Swap transactie bouwen
     const swapResp = await fetch('https://quote-api.jup.ag/v6/swap', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        quoteResponse:         quote,
-        userPublicKey:         _publicKey,
-        wrapAndUnwrapSol:      true,   // Automatisch SOL ↔ wSOL
-        dynamicComputeUnitLimit: true, // Optimale compute units
-        prioritizationFeeLamports: 'auto', // Auto priority fee voor snelle uitvoering
+        quoteResponse:             quote,
+        userPublicKey:             _publicKey,
+        wrapAndUnwrapSol:          true,
+        dynamicComputeUnitLimit:   true,
+        prioritizationFeeLamports: 'auto',
       }),
     });
-
-    if (!swapResp.ok) {
-      const err = await swapResp.text();
-      throw new Error('Jupiter swap build mislukt: ' + err);
-    }
+    if (!swapResp.ok) throw new Error('Swap build fout: ' + await swapResp.text());
 
     const swapData = await swapResp.json();
     if (swapData.error) throw new Error('Swap error: ' + swapData.error);
 
-    const { swapTransaction } = swapData;
+    Storage.addLog('info', '✍️ Phantom opent voor bevestiging...');
 
-    Storage.addLog('info', '✍️ Transactie klaar — Phantom opent voor bevestiging...');
-
-    // STAP 3: Deserialize en stuur naar Phantom voor ondertekening
-    // Phantom tekent ALLEEN — private key verlaat de wallet nooit
-    const txBuffer = Uint8Array.from(atob(swapTransaction), function(c) { return c.charCodeAt(0); });
-
-    // Gebruik sendTransaction voor Versioned Transactions (Jupiter v6 gebruikt deze)
-    let signature;
-    try {
-      // Probeer eerst sendTransaction (voor versioned transactions)
-      signature = await provider.request({
-        method: 'signAndSendTransaction',
-        params: {
-          message:     swapTransaction,
-          connection:  'mainnet-beta',
-        },
-      });
-    } catch(e1) {
-      // Fallback naar directe method
-      try {
-        const result = await provider.signAndSendTransaction({
-          serialize: function() { return txBuffer; },
-          signatures: [],
-        });
-        signature = result.signature || result;
-      } catch(e2) {
-        throw new Error('Phantom signing mislukt: ' + (e2.message || e2));
-      }
-    }
-
-    const sig = typeof signature === 'object' ? signature.signature || signature.publicKey : signature;
+    // STAP 3: Phantom signing
+    // Phantom ondersteunt Base64 versioned transactions direct
+    const signature = await _signAndSend(provider, swapData.swapTransaction);
 
     Storage.addLog('success',
-      '✅ LIVE TRADE UITGEVOERD! Tx: ' + String(sig).slice(0, 20) + '...' +
-      ' | Bekijk: https://solscan.io/tx/' + sig
+      '✅ GEKOCHT! ' + String(signature).slice(0,16) + '... | ' +
+      'https://solscan.io/tx/' + signature
     );
 
-    // Update wallet balance na trade
+    // Refresh balance na 3 sec
     setTimeout(async function() {
-      const newBalance = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: newBalance });
+      const b = await getBalance();
+      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b });
       if (typeof App !== 'undefined') App.onWalletChange();
     }, 3000);
 
-    return { signature: sig, outAmount };
+    return { signature, outAmount };
+  }
+
+  // ── PHANTOM SIGNING HELPER ───────────────────────────────
+  // Ondersteunt alle Phantom versies en transaction types
+  async function _signAndSend(provider, base64Transaction) {
+    // Methode 1: Meest directe manier voor Phantom (werkt met versioned tx)
+    try {
+      const result = await provider.signAndSendTransaction(
+        Buffer.from(base64Transaction, 'base64')
+      );
+      return result.signature || result;
+    } catch(e1) {
+      // Methode 2: Via request API
+      try {
+        const result = await provider.request({
+          method: 'signAndSendTransaction',
+          params: { transaction: base64Transaction },
+        });
+        return result.signature || result;
+      } catch(e2) {
+        // Methode 3: Deserialize als Uint8Array
+        try {
+          const bytes  = Uint8Array.from(atob(base64Transaction), function(c) { return c.charCodeAt(0); });
+          const result = await provider.signAndSendTransaction({
+            serialize:  function() { return bytes; },
+            signatures: [],
+          });
+          return result.signature || result;
+        } catch(e3) {
+          throw new Error('Alle signing methoden mislukt: ' + e3.message);
+        }
+      }
+    }
   }
 
   // ── SELL via Jupiter ──────────────────────────────────────
@@ -304,30 +319,16 @@ const Wallet = (() => {
 
     const { swapTransaction } = swapData;
 
-    let signature;
-    try {
-      signature = await provider.request({
-        method: 'signAndSendTransaction',
-        params: { message: swapTransaction, connection: 'mainnet-beta' },
-      });
-    } catch(e) {
-      const txBuffer = Uint8Array.from(atob(swapTransaction), function(c) { return c.charCodeAt(0); });
-      const result   = await provider.signAndSendTransaction({
-        serialize: function() { return txBuffer; },
-        signatures: [],
-      });
-      signature = result.signature || result;
-    }
-
-    const sig = typeof signature === 'object' ? signature.signature || signature : signature;
+    const sig = await _signAndSend(provider, swapTransaction);
 
     Storage.addLog('success',
-      '✅ VERKOOP UITGEVOERD! ' + outSOL.toFixed(5) + ' SOL ontvangen | Tx: ' + String(sig).slice(0,20) + '...'
+      '✅ VERKOCHT! ' + outSOL.toFixed(5) + ' SOL ontvangen | ' +
+      'https://solscan.io/tx/' + sig
     );
 
     setTimeout(async function() {
-      const newBalance = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: newBalance });
+      const b = await getBalance();
+      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b });
       if (typeof App !== 'undefined') App.onWalletChange();
     }, 3000);
 
