@@ -58,18 +58,37 @@ const UI = (() => {
 
   // ── WALLET UI ─────────────────────────────────────────────
   function updateWalletUI(wallet) {
-    const dot   = _el('wallet-dot');
-    const label = _el('wallet-label');
-    const btn   = _el('btn-connect-wallet');
+    var dot          = _el('wallet-dot');
+    var label        = _el('wallet-label');
+    var connectBtns  = _el('wallet-connect-btns');
+    var disconnectBtn= _el('btn-disconnect-wallet');
+    var addrInput    = _el('wallet-address-input');
+
     if (wallet && wallet.isConnected && wallet.publicKey) {
-      const s = wallet.publicKey.slice(0,6) + '…' + wallet.publicKey.slice(-4);
-      if (dot)   dot.className    = 'wallet-dot wallet-dot--on';
-      if (label) label.textContent = s + ' | ' + (wallet.balance || 0).toFixed(4) + ' SOL';
-      if (btn) { btn.textContent = '🔌 Verbreek'; btn.classList.add('btn--connected'); }
+      var short = wallet.publicKey.slice(0,6) + '…' + wallet.publicKey.slice(-4);
+      var bal   = (wallet.balance || 0).toFixed(4);
+      var type  = wallet.isPhantom ? '👻' : '📋';
+
+      if (dot)   dot.className     = 'wallet-dot wallet-dot--on';
+      if (label) label.textContent = type + ' ' + short + ' | ' + bal + ' SOL';
+
+      // Toon alleen disconnect knop
+      if (connectBtns)   connectBtns.style.display   = 'none';
+      if (addrInput)     addrInput.style.display      = 'none';
+      if (disconnectBtn) disconnectBtn.style.display  = 'block';
+
+      // Waarschuwing als geen Phantom (read-only)
+      if (!wallet.isPhantom) {
+        if (label) label.title = 'Read-only adres — live trades vereisen Phantom wallet';
+      }
     } else {
-      if (dot)   dot.className    = 'wallet-dot wallet-dot--off';
+      if (dot)   dot.className     = 'wallet-dot wallet-dot--off';
       if (label) label.textContent = 'Niet verbonden';
-      if (btn) { btn.textContent = '👻 Verbind Phantom'; btn.classList.remove('btn--connected'); }
+
+      // Toon connect knoppen
+      if (connectBtns)   connectBtns.style.display   = 'flex';
+      if (addrInput)     addrInput.style.display      = 'none';
+      if (disconnectBtn) disconnectBtn.style.display  = 'none';
     }
   }
 

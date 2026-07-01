@@ -106,6 +106,8 @@ input, select { font-family: var(--font); }
 
 .wallet-panel { display: flex; flex-direction: column; gap: 6px; }
 
+#wallet-connect-btns { display: flex; flex-direction: column; gap: 4px; }
+
 .wallet-status {
   display: flex;
   align-items: center;

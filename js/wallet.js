@@ -1,172 +1,218 @@
 /* ============================================================
-   WALLET.JS - Phantom wallet + Jupiter swap integratie
-   Echte live trades via Jupiter API (gratis, geen key nodig)
-   Private keys worden NOOIT opgeslagen of verstuurd
+   WALLET.JS - Flexibele wallet integratie
+   Ondersteunt:
+   1. Phantom wallet (voor live trades)
+   2. Handmatig adres invullen (voor saldo monitoring)
+   3. Axiom embedded wallet (read-only via adres)
+   
+   PRIVATE KEYS WORDEN NOOIT OPGESLAGEN
    ============================================================ */
 'use strict';
 
 const Wallet = (() => {
 
-  let _publicKey = null;
-  let _connected = false;
+  let _publicKey  = null;
+  let _connected  = false;
+  let _isPhantom  = false; // True als via Phantom, false als handmatig adres
 
-  // Solana token adressen
-  const SOL_MINT  = 'So11111111111111111111111111111111111111112'; // Wrapped SOL
-  const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC
+  const SOL_MINT  = 'So11111111111111111111111111111111111111112';
 
+  // ── PHANTOM PROVIDER ──────────────────────────────────────
   function _getProvider() {
-    if (window.phantom && window.phantom.solana && window.phantom.solana.isPhantom)
-      return window.phantom.solana;
-    if (window.solana && window.solana.isPhantom)
-      return window.solana;
+    if (window.phantom?.solana?.isPhantom) return window.phantom.solana;
+    if (window.solana?.isPhantom)          return window.solana;
     return null;
   }
 
   function isPhantomInstalled() { return !!_getProvider(); }
   function isConnected()        { return _connected; }
+  function isPhantomWallet()    { return _isPhantom; }
   function getPublicKey()       { return _publicKey; }
 
-  // ── VERBINDEN ──────────────────────────────────────────────
+  // ── PHANTOM VERBINDEN ─────────────────────────────────────
   async function connect() {
     const provider = _getProvider();
     if (!provider) {
       window.open('https://phantom.app/', '_blank');
       throw new Error('Phantom niet gevonden. Installeer Phantom en herlaad de pagina.');
     }
-    try {
-      const resp = await provider.connect();
-      _publicKey = resp.publicKey.toString();
-      _connected = true;
+    const resp  = await provider.connect();
+    _publicKey  = resp.publicKey.toString();
+    _connected  = true;
+    _isPhantom  = true;
 
-      const balance = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance });
+    const balance = await getBalance(_publicKey);
+    Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance, isPhantom: true });
 
-      // Event listeners
-      provider.on('accountChanged', function(pk) {
-        if (pk) {
-          _publicKey = pk.toString();
-          Storage.addLog('info', 'Wallet account gewisseld: ' + _short(_publicKey));
-        } else {
-          disconnect();
-        }
-        if (typeof App !== 'undefined') App.onWalletChange();
-      });
+    provider.on('accountChanged', pk => {
+      if (pk) { _publicKey = pk.toString(); }
+      else    { _doDisconnect(); }
+      if (typeof App !== 'undefined') App.onWalletChange();
+    });
+    provider.on('disconnect', () => {
+      _doDisconnect();
+      if (typeof App !== 'undefined') App.onWalletChange();
+    });
 
-      provider.on('disconnect', function() {
-        disconnect();
-        if (typeof App !== 'undefined') App.onWalletChange();
-      });
+    Storage.addLog('success', '👻 Phantom verbonden: ' + _short(_publicKey) + ' | ' + balance.toFixed(4) + ' SOL');
+    return { publicKey: _publicKey, balance };
+  }
 
-      Storage.addLog('success',
-        '👻 Wallet verbonden: ' + _short(_publicKey) +
-        ' | ' + balance.toFixed(4) + ' SOL'
-      );
-      return { publicKey: _publicKey, balance };
-
-    } catch (err) {
-      if (err.code === 4001) throw new Error('Verbinding geweigerd door gebruiker.');
-      throw err;
+  // ── HANDMATIG ADRES INVULLEN (voor Axiom wallet) ──────────
+  async function connectByAddress(address) {
+    // Valideer Solana adres (base58, 32-44 tekens)
+    if (!address || address.length < 32 || address.length > 44) {
+      throw new Error('Ongeldig Solana wallet adres');
     }
+
+    _publicKey = address.trim();
+    _connected = true;
+    _isPhantom = false;
+
+    const balance = await getBalance(_publicKey);
+    Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance, isPhantom: false });
+
+    Storage.addLog('success', '🔍 Wallet adres ingesteld: ' + _short(_publicKey) + ' | ' + balance.toFixed(4) + ' SOL');
+    return { publicKey: _publicKey, balance };
+  }
+
+  function _doDisconnect() {
+    _publicKey = null;
+    _connected = false;
+    _isPhantom = false;
+    Storage.saveWallet({ isConnected: false, publicKey: null, balance: null, isPhantom: false });
   }
 
   async function disconnect() {
-    try { const p = _getProvider(); if (p) p.disconnect(); } catch(e) {}
-    _publicKey = null;
-    _connected = false;
-    Storage.saveWallet({ isConnected: false, publicKey: null, balance: null });
+    try { if (_isPhantom) _getProvider()?.disconnect(); } catch(e) {}
+    _doDisconnect();
     Storage.addLog('info', '🔌 Wallet verbroken');
   }
 
   async function tryAutoConnect() {
+    const stored = Storage.getWallet();
+    if (!stored || !stored.isConnected || !stored.publicKey) return null;
+
+    // Als het een handmatig adres was, herstel direct
+    if (!stored.isPhantom) {
+      _publicKey = stored.publicKey;
+      _connected = true;
+      _isPhantom = false;
+      const balance = await getBalance(_publicKey);
+      Storage.saveWallet({ ...stored, balance });
+      Storage.addLog('info', '🔄 Wallet hersteld: ' + _short(_publicKey) + ' | ' + balance.toFixed(4) + ' SOL');
+      return { publicKey: _publicKey, balance };
+    }
+
+    // Phantom eager connect
     const provider = _getProvider();
     if (!provider) return null;
     try {
-      const resp = await provider.connect({ onlyIfTrusted: true });
-      _publicKey = resp.publicKey.toString();
-      _connected = true;
-      const balance = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance });
-      Storage.addLog('info', '🔄 Auto-verbonden: ' + _short(_publicKey) + ' | ' + balance.toFixed(4) + ' SOL');
+      const resp  = await provider.connect({ onlyIfTrusted: true });
+      _publicKey  = resp.publicKey.toString();
+      _connected  = true;
+      _isPhantom  = true;
+      const balance = await getBalance(_publicKey);
+      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance, isPhantom: true });
+      Storage.addLog('info', '🔄 Phantom hersteld: ' + _short(_publicKey) + ' | ' + balance.toFixed(4) + ' SOL');
       return { publicKey: _publicKey, balance };
     } catch(e) { return null; }
   }
 
-  // ── SALDO OPHALEN ──────────────────────────────────────────
-  async function getBalance() {
-    if (!_publicKey) return 0;
+  // ── SALDO OPHALEN ─────────────────────────────────────────
+  // Gebruikt meerdere RPC endpoints — stopt bij eerste succes
+  async function getBalance(pubkey) {
+    const pk = pubkey || _publicKey;
+    if (!pk) return 0;
 
-    // Werkende publieke RPC endpoints met CORS ondersteuning
+    const body = JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      method:  'getBalance',
+      params:  [pk, { commitment: 'confirmed' }],
+    });
+
+    // Endpoints gesorteerd op betrouwbaarheid voor browser gebruik
     const endpoints = [
-      'https://mainnet.helius-rpc.com/?api-key=15319d07-b4d3-4376-905b-3885f0bb1211',
       'https://api.mainnet-beta.solana.com',
       'https://rpc.ankr.com/solana',
+      'https://mainnet.helius-rpc.com/?api-key=15319d07-b4d3-4376-905b-3885f0bb1211',
       'https://solana-mainnet.rpc.extrnode.com',
     ];
 
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id:      1,
-      method:  'getBalance',
-      params:  [_publicKey, { commitment: 'confirmed' }],
-    });
-
-    for (var i = 0; i < endpoints.length; i++) {
-      var url = endpoints[i];
+    for (const url of endpoints) {
       try {
-        var r = await fetch(url, {
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const r     = await fetch(url, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    body,
-        });
+          body,
+          signal: ctrl.signal,
+        }).finally(() => clearTimeout(timer));
 
         if (!r.ok) continue;
-        var d = await r.json();
-        if (d.error || !d.result) continue;
+        const d        = await r.json();
+        if (d.error)   continue;
 
-        // result kan { value: N } of gewoon N zijn
-        var lamports = (typeof d.result === 'object' && d.result !== null)
-          ? d.result.value
-          : d.result;
-
-        if (typeof lamports === 'number' && lamports >= 0) {
-          return lamports / 1e9;
+        // Sommige nodes geven result.value, andere geven result direct
+        const val = d.result?.value ?? d.result;
+        if (typeof val === 'number' && val >= 0) {
+          return val / 1e9;
         }
-      } catch(e) {
-        console.warn('[Wallet] RPC fout bij', url.split('?')[0], ':', e.message);
-      }
+      } catch(e) { /* probeer volgende */ }
     }
 
-    // Fallback: laatste bekende saldo
-    var stored = Storage.getWallet();
-    return (stored && stored.balance > 0) ? stored.balance : 0;
+    // Geef laatste bekende waarde terug — geen error loggen
+    const stored = Storage.getWallet();
+    return stored?.balance ?? 0;
   }
 
-  // ── JUPITER SWAP — ECHTE LIVE TRADE ───────────────────────
-  async function executeSwap(tokenMint, amountSol, slippageBps) {
-    if (!_connected || !_publicKey) throw new Error('Wallet niet verbonden');
-    slippageBps = slippageBps || 100;
-
+  // ── PHANTOM SIGNING HELPER ────────────────────────────────
+  async function _signAndSend(base64Tx) {
     const provider = _getProvider();
     if (!provider) throw new Error('Phantom niet gevonden');
 
+    // Methode 1: Directe signAndSendTransaction (meest compatibel)
+    try {
+      const txBytes = Uint8Array.from(atob(base64Tx), c => c.charCodeAt(0));
+      const result  = await provider.signAndSendTransaction({ serialize: () => txBytes, signatures: [] });
+      return result?.signature ?? result;
+    } catch(e1) {
+      // Methode 2: Via request API
+      try {
+        const result = await provider.request({
+          method: 'signAndSendTransaction',
+          params: { transaction: base64Tx },
+        });
+        return result?.signature ?? result;
+      } catch(e2) {
+        throw new Error('Phantom signing mislukt: ' + e2.message);
+      }
+    }
+  }
+
+  // ── JUPITER SWAP (alleen bij Phantom wallet) ──────────────
+  async function executeSwap(tokenMint, amountSol, slippageBps) {
+    if (!_connected)  throw new Error('Wallet niet verbonden');
+    if (!_isPhantom)  throw new Error('Live trades vereisen Phantom wallet. Je gebruikt nu een read-only adres (Axiom wallet). Verbind Phantom voor live trading.');
+
+    slippageBps = slippageBps || 100;
     const lamports = Math.floor(amountSol * 1e9);
+
     Storage.addLog('info', '🔄 Jupiter quote: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...');
 
-    // STAP 1: Quote ophalen
-    const quoteParams = new URLSearchParams({
-      inputMint:        SOL_MINT,
-      outputMint:       tokenMint,
-      amount:           lamports.toString(),
-      slippageBps:      slippageBps.toString(),
-      onlyDirectRoutes: 'false',
-    });
-
+    // Quote ophalen
     const quoteResp = await fetch(
-      'https://quote-api.jup.ag/v6/quote?' + quoteParams.toString(),
+      'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
+        inputMint:        SOL_MINT,
+        outputMint:       tokenMint,
+        amount:           lamports.toString(),
+        slippageBps:      slippageBps.toString(),
+        onlyDirectRoutes: 'false',
+      }),
       { headers: { 'Accept': 'application/json' } }
     );
     if (!quoteResp.ok) throw new Error('Jupiter quote fout: ' + await quoteResp.text());
-
     const quote = await quoteResp.json();
     if (quote.error) throw new Error('Jupiter: ' + quote.error);
 
@@ -175,10 +221,10 @@ const Wallet = (() => {
     Storage.addLog('info', '📊 Quote OK | Impact: ' + priceImpact.toFixed(2) + '%');
     if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge price impact: ' + priceImpact.toFixed(1) + '%');
 
-    // STAP 2: Swap transactie bouwen
+    // Swap transactie bouwen
     const swapResp = await fetch('https://quote-api.jup.ag/v6/swap', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         quoteResponse:             quote,
         userPublicKey:             _publicKey,
@@ -188,138 +234,79 @@ const Wallet = (() => {
       }),
     });
     if (!swapResp.ok) throw new Error('Swap build fout: ' + await swapResp.text());
-
     const swapData = await swapResp.json();
     if (swapData.error) throw new Error('Swap error: ' + swapData.error);
 
     Storage.addLog('info', '✍️ Phantom opent voor bevestiging...');
+    const signature = await _signAndSend(swapData.swapTransaction);
 
-    // STAP 3: Phantom signing
-    // Phantom ondersteunt Base64 versioned transactions direct
-    const signature = await _signAndSend(provider, swapData.swapTransaction);
+    Storage.addLog('success', '✅ GEKOCHT! solscan.io/tx/' + String(signature).slice(0,20) + '...');
 
-    Storage.addLog('success',
-      '✅ GEKOCHT! ' + String(signature).slice(0,16) + '... | ' +
-      'https://solscan.io/tx/' + signature
-    );
-
-    // Refresh balance na 3 sec
-    setTimeout(async function() {
+    setTimeout(async () => {
       const b = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b });
+      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b, isPhantom: true });
       if (typeof App !== 'undefined') App.onWalletChange();
     }, 3000);
 
     return { signature, outAmount };
   }
 
-  // ── PHANTOM SIGNING HELPER ───────────────────────────────
-  // Ondersteunt alle Phantom versies en transaction types
-  async function _signAndSend(provider, base64Transaction) {
-    // Methode 1: Meest directe manier voor Phantom (werkt met versioned tx)
-    try {
-      const result = await provider.signAndSendTransaction(
-        Buffer.from(base64Transaction, 'base64')
-      );
-      return result.signature || result;
-    } catch(e1) {
-      // Methode 2: Via request API
-      try {
-        const result = await provider.request({
-          method: 'signAndSendTransaction',
-          params: { transaction: base64Transaction },
-        });
-        return result.signature || result;
-      } catch(e2) {
-        // Methode 3: Deserialize als Uint8Array
-        try {
-          const bytes  = Uint8Array.from(atob(base64Transaction), function(c) { return c.charCodeAt(0); });
-          const result = await provider.signAndSendTransaction({
-            serialize:  function() { return bytes; },
-            signatures: [],
-          });
-          return result.signature || result;
-        } catch(e3) {
-          throw new Error('Alle signing methoden mislukt: ' + e3.message);
-        }
-      }
-    }
-  }
-
-  // ── SELL via Jupiter ──────────────────────────────────────
+  // ── JUPITER SELL ──────────────────────────────────────────
   async function executeSell(tokenMint, tokenAmount, decimals, slippageBps) {
-    if (!_connected || !_publicKey) throw new Error('Wallet niet verbonden');
+    if (!_connected)  throw new Error('Wallet niet verbonden');
+    if (!_isPhantom)  throw new Error('Live sells vereisen Phantom wallet.');
 
-    slippageBps = slippageBps || 150; // 1.5% voor sells (iets meer tolerantie)
-    decimals    = decimals || 6;
-
+    decimals    = decimals    || 6;
+    slippageBps = slippageBps || 150;
     const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
-    const provider  = _getProvider();
 
-    Storage.addLog('info', '🔄 Verkoop quote: ' + tokenAmount + ' tokens → SOL');
-
-    const quoteUrl = 'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
-      inputMint:   tokenMint,
-      outputMint:  SOL_MINT,
-      amount:      rawAmount.toString(),
-      slippageBps: slippageBps.toString(),
-    }).toString();
-
-    const quoteResp = await fetch(quoteUrl, { headers: { 'Accept': 'application/json' } });
-    if (!quoteResp.ok) throw new Error('Sell quote mislukt');
-
+    const quoteResp = await fetch(
+      'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
+        inputMint:   tokenMint,
+        outputMint:  SOL_MINT,
+        amount:      rawAmount.toString(),
+        slippageBps: slippageBps.toString(),
+      }),
+      { headers: { 'Accept': 'application/json' } }
+    );
+    if (!quoteResp.ok) throw new Error('Sell quote fout');
     const quote = await quoteResp.json();
-    if (quote.error) throw new Error('Jupiter sell fout: ' + quote.error);
+    if (quote.error) throw new Error('Jupiter sell: ' + quote.error);
 
     const outSOL = parseInt(quote.outAmount || '0') / 1e9;
-    Storage.addLog('info', '📊 Sell quote: ' + tokenAmount + ' tokens → ' + outSOL.toFixed(5) + ' SOL');
+    Storage.addLog('info', '📊 Sell quote: → ' + outSOL.toFixed(5) + ' SOL');
 
     const swapResp = await fetch('https://quote-api.jup.ag/v6/swap', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        quoteResponse:           quote,
-        userPublicKey:           _publicKey,
-        wrapAndUnwrapSol:        true,
-        dynamicComputeUnitLimit: true,
+        quoteResponse:             quote,
+        userPublicKey:             _publicKey,
+        wrapAndUnwrapSol:          true,
+        dynamicComputeUnitLimit:   true,
         prioritizationFeeLamports: 'auto',
       }),
     });
-
-    if (!swapResp.ok) throw new Error('Sell swap build mislukt');
+    if (!swapResp.ok) throw new Error('Sell build fout');
     const swapData = await swapResp.json();
 
-    const { swapTransaction } = swapData;
+    const signature = await _signAndSend(swapData.swapTransaction);
+    Storage.addLog('success', '✅ VERKOCHT! ' + outSOL.toFixed(5) + ' SOL ontvangen');
 
-    const sig = await _signAndSend(provider, swapTransaction);
-
-    Storage.addLog('success',
-      '✅ VERKOCHT! ' + outSOL.toFixed(5) + ' SOL ontvangen | ' +
-      'https://solscan.io/tx/' + sig
-    );
-
-    setTimeout(async function() {
+    setTimeout(async () => {
       const b = await getBalance();
-      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b });
+      Storage.saveWallet({ isConnected: true, publicKey: _publicKey, balance: b, isPhantom: true });
       if (typeof App !== 'undefined') App.onWalletChange();
     }, 3000);
 
-    return { signature: sig, outSOL };
+    return { signature, outSOL };
   }
 
-  function _short(pk) {
-    return pk ? pk.slice(0,6) + '...' + pk.slice(-4) : '';
-  }
+  function _short(pk) { return pk ? pk.slice(0,6) + '...' + pk.slice(-4) : ''; }
 
   return {
-    isPhantomInstalled,
-    isConnected,
-    getPublicKey,
-    connect,
-    disconnect,
-    tryAutoConnect,
-    getBalance,
-    executeSwap,
-    executeSell,
+    isPhantomInstalled, isConnected, isPhantomWallet, getPublicKey,
+    connect, connectByAddress, disconnect, tryAutoConnect,
+    getBalance, executeSwap, executeSell,
   };
 })();
