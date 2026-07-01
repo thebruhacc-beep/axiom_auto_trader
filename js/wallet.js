@@ -92,81 +92,53 @@ const Wallet = (() => {
   }
 
   // ── SALDO OPHALEN ──────────────────────────────────────────
-  // Strategie 1: Via Phantom wallet zelf (geen CORS probleem)
-  // Strategie 2: Via CORS-vriendelijke publieke RPC endpoints
   async function getBalance() {
     if (!_publicKey) return 0;
 
-    // METHODE 1: Phantom heeft eigen connection object — geen externe RPC nodig
-    const provider = _getProvider();
-    if (provider && provider.connection) {
-      try {
-        const pk  = new window.solanaWeb3.PublicKey(_publicKey);
-        const bal = await provider.connection.getBalance(pk);
-        if (typeof bal === 'number' && bal >= 0) {
-          return bal / 1e9;
-        }
-      } catch(e) { /* fallback */ }
-    }
-
-    // METHODE 2: Phantom request methode (werkt altijd als wallet verbonden is)
-    if (provider && provider.request) {
-      try {
-        const result = await provider.request({
-          method: 'getBalance',
-          params: { commitment: 'confirmed' },
-        });
-        if (result && typeof result.value === 'number') {
-          return result.value / 1e9;
-        }
-      } catch(e) { /* fallback */ }
-    }
-
-    // METHODE 3: CORS-vriendelijke publieke endpoints
-    // Deze endpoints hebben Access-Control-Allow-Origin: * headers
+    // Werkende publieke RPC endpoints met CORS ondersteuning
     const endpoints = [
-      { url: 'https://api.mainnet-beta.solana.com',        cors: true },
-      { url: 'https://rpc.ankr.com/solana',                cors: true },
-      { url: 'https://solana.public-rpc.com',              cors: true },
-      // Helius gratis tier: voeg eigen API key toe in Instellingen voor betere betrouwbaarheid
+      'https://mainnet.helius-rpc.com/?api-key=15319d07-b4d3-4376-905b-3885f0bb1211',
+      'https://api.mainnet-beta.solana.com',
+      'https://rpc.ankr.com/solana',
+      'https://solana-mainnet.rpc.extrnode.com',
     ];
 
-    for (const ep of endpoints) {
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id:      1,
+      method:  'getBalance',
+      params:  [_publicKey, { commitment: 'confirmed' }],
+    });
+
+    for (var i = 0; i < endpoints.length; i++) {
+      var url = endpoints[i];
       try {
-        const r = await fetch(ep.url, {
+        var r = await fetch(url, {
           method:  'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept':       'application/json',
-          },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id:      1,
-            method:  'getBalance',
-            params:  [_publicKey, { commitment: 'confirmed' }],
-          }),
+          headers: { 'Content-Type': 'application/json' },
+          body:    body,
         });
 
         if (!r.ok) continue;
-        const d = await r.json();
-        if (d.error) continue;
+        var d = await r.json();
+        if (d.error || !d.result) continue;
 
-        const lamports = d.result && d.result.value;
+        // result kan { value: N } of gewoon N zijn
+        var lamports = (typeof d.result === 'object' && d.result !== null)
+          ? d.result.value
+          : d.result;
+
         if (typeof lamports === 'number' && lamports >= 0) {
           return lamports / 1e9;
         }
       } catch(e) {
-        continue;
+        console.warn('[Wallet] RPC fout bij', url.split('?')[0], ':', e.message);
       }
     }
 
-    // METHODE 4: DexScreener SOL pair als absolute fallback voor prijs
-    // (geeft geen wallet balance maar toont tenminste iets)
-    Storage.addLog('warning', '⚠️ RPC bereikbaar maar wallet balance tijdelijk onbeschikbaar');
-    
-    // Geef laatste bekende balance terug als fallback
-    const stored = Storage.getWallet();
-    return stored.balance || 0;
+    // Fallback: laatste bekende saldo
+    var stored = Storage.getWallet();
+    return (stored && stored.balance > 0) ? stored.balance : 0;
   }
 
   // ── JUPITER SWAP — ECHTE LIVE TRADE ───────────────────────
