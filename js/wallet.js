@@ -120,51 +120,37 @@ const Wallet = (() => {
   }
 
   // ── SALDO OPHALEN ─────────────────────────────────────────
-  // Gebruikt meerdere RPC endpoints — stopt bij eerste succes
+  // Gebruikt eigen Vercel proxy /api/rpc — geen CORS probleem
   async function getBalance(pubkey) {
     const pk = pubkey || _publicKey;
     if (!pk) return 0;
 
-    const body = JSON.stringify({
-      jsonrpc: '2.0', id: 1,
-      method:  'getBalance',
-      params:  [pk, { commitment: 'confirmed' }],
-    });
+    try {
+      // Eigen proxy op Vercel — draait server-side, geen CORS
+      const r = await fetch('/api/rpc', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ address: pk }),
+        signal:  AbortSignal.timeout(8000),
+      });
 
-    // Endpoints gesorteerd op betrouwbaarheid voor browser gebruik
-    const endpoints = [
-      'https://api.mainnet-beta.solana.com',
-      'https://rpc.ankr.com/solana',
-      'https://mainnet.helius-rpc.com/?api-key=15319d07-b4d3-4376-905b-3885f0bb1211',
-      'https://solana-mainnet.rpc.extrnode.com',
-    ];
-
-    for (const url of endpoints) {
-      try {
-        const ctrl  = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 5000);
-        const r     = await fetch(url, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          signal: ctrl.signal,
-        }).finally(() => clearTimeout(timer));
-
-        if (!r.ok) continue;
-        const d        = await r.json();
-        if (d.error)   continue;
-
-        // Sommige nodes geven result.value, andere geven result direct
-        const val = d.result?.value ?? d.result;
-        if (typeof val === 'number' && val >= 0) {
-          return val / 1e9;
+      if (r.ok) {
+        const d = await r.json();
+        if (typeof d.sol === 'number' && d.sol >= 0) {
+          console.log('[Wallet] Saldo via proxy:', d.sol, 'SOL (bron:', d.source, ')');
+          return d.sol;
         }
-      } catch(e) { /* probeer volgende */ }
+        if (d.error) {
+          console.warn('[Wallet] Proxy fout:', d.error);
+        }
+      }
+    } catch(e) {
+      console.warn('[Wallet] Proxy niet bereikbaar:', e.message);
     }
 
-    // Geef laatste bekende waarde terug — geen error loggen
+    // Fallback: laatste bekende saldo
     const stored = Storage.getWallet();
-    return stored?.balance ?? 0;
+    return (stored && stored.balance > 0) ? stored.balance : 0;
   }
 
   // ── PHANTOM SIGNING HELPER ────────────────────────────────
@@ -201,18 +187,22 @@ const Wallet = (() => {
 
     Storage.addLog('info', '🔄 Jupiter quote: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...');
 
-    // Quote ophalen
-    const quoteResp = await fetch(
-      'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
-        inputMint:        SOL_MINT,
-        outputMint:       tokenMint,
-        amount:           lamports.toString(),
-        slippageBps:      slippageBps.toString(),
-        onlyDirectRoutes: 'false',
+    // Quote ophalen via eigen proxy (geen CORS)
+    const quoteResp = await fetch('/api/jupiter', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'quote',
+        params: {
+          inputMint:        SOL_MINT,
+          outputMint:       tokenMint,
+          amount:           lamports.toString(),
+          slippageBps:      slippageBps.toString(),
+          onlyDirectRoutes: 'false',
+        },
       }),
-      { headers: { 'Accept': 'application/json' } }
-    );
-    if (!quoteResp.ok) throw new Error('Jupiter quote fout: ' + await quoteResp.text());
+    });
+    if (!quoteResp.ok) throw new Error('Jupiter quote proxy fout');
     const quote = await quoteResp.json();
     if (quote.error) throw new Error('Jupiter: ' + quote.error);
 
@@ -221,19 +211,22 @@ const Wallet = (() => {
     Storage.addLog('info', '📊 Quote OK | Impact: ' + priceImpact.toFixed(2) + '%');
     if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge price impact: ' + priceImpact.toFixed(1) + '%');
 
-    // Swap transactie bouwen
-    const swapResp = await fetch('https://quote-api.jup.ag/v6/swap', {
+    // Swap transactie bouwen via proxy
+    const swapResp = await fetch('/api/jupiter', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        quoteResponse:             quote,
-        userPublicKey:             _publicKey,
-        wrapAndUnwrapSol:          true,
-        dynamicComputeUnitLimit:   true,
-        prioritizationFeeLamports: 'auto',
+        action: 'swap',
+        params: {
+          quoteResponse:             quote,
+          userPublicKey:             _publicKey,
+          wrapAndUnwrapSol:          true,
+          dynamicComputeUnitLimit:   true,
+          prioritizationFeeLamports: 'auto',
+        },
       }),
     });
-    if (!swapResp.ok) throw new Error('Swap build fout: ' + await swapResp.text());
+    if (!swapResp.ok) throw new Error('Swap build proxy fout');
     const swapData = await swapResp.json();
     if (swapData.error) throw new Error('Swap error: ' + swapData.error);
 
@@ -260,34 +253,41 @@ const Wallet = (() => {
     slippageBps = slippageBps || 150;
     const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
 
-    const quoteResp = await fetch(
-      'https://quote-api.jup.ag/v6/quote?' + new URLSearchParams({
-        inputMint:   tokenMint,
-        outputMint:  SOL_MINT,
-        amount:      rawAmount.toString(),
-        slippageBps: slippageBps.toString(),
+    const quoteResp = await fetch('/api/jupiter', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'quote',
+        params: {
+          inputMint:   tokenMint,
+          outputMint:  SOL_MINT,
+          amount:      rawAmount.toString(),
+          slippageBps: slippageBps.toString(),
+        },
       }),
-      { headers: { 'Accept': 'application/json' } }
-    );
-    if (!quoteResp.ok) throw new Error('Sell quote fout');
+    });
+    if (!quoteResp.ok) throw new Error('Sell quote proxy fout');
     const quote = await quoteResp.json();
     if (quote.error) throw new Error('Jupiter sell: ' + quote.error);
 
     const outSOL = parseInt(quote.outAmount || '0') / 1e9;
     Storage.addLog('info', '📊 Sell quote: → ' + outSOL.toFixed(5) + ' SOL');
 
-    const swapResp = await fetch('https://quote-api.jup.ag/v6/swap', {
+    const swapResp = await fetch('/api/jupiter', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        quoteResponse:             quote,
-        userPublicKey:             _publicKey,
-        wrapAndUnwrapSol:          true,
-        dynamicComputeUnitLimit:   true,
-        prioritizationFeeLamports: 'auto',
+        action: 'swap',
+        params: {
+          quoteResponse:             quote,
+          userPublicKey:             _publicKey,
+          wrapAndUnwrapSol:          true,
+          dynamicComputeUnitLimit:   true,
+          prioritizationFeeLamports: 'auto',
+        },
       }),
     });
-    if (!swapResp.ok) throw new Error('Sell build fout');
+    if (!swapResp.ok) throw new Error('Sell build proxy fout');
     const swapData = await swapResp.json();
 
     const signature = await _signAndSend(swapData.swapTransaction);
