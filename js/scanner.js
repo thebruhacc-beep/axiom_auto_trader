@@ -208,23 +208,25 @@ const Scanner = (() => {
                 ' | ' + settings.tradeAmount + ' SOL'
               );
               try {
-                // Controleer saldo voor trade
-                const balance = await Wallet.getBalance();
-                if (balance < settings.tradeAmount + 0.002) {
+                // Controleer saldo via proxy voor trade
+                const walletInfo = Storage.getWallet();
+                const balance    = walletInfo.balance || 0;
+                const needed     = settings.tradeAmount + 0.005; // trade + fees buffer
+
+                if (balance < needed) {
                   Storage.addLog('warning',
-                    '⚠️ Onvoldoende saldo: ' + balance.toFixed(5) +
-                    ' SOL (nodig: ' + (settings.tradeAmount + 0.002).toFixed(3) + ' SOL voor fees)'
+                    '⚠️ Onvoldoende saldo: ' + balance.toFixed(4) +
+                    ' SOL (nodig: ' + needed.toFixed(3) + ' SOL)'
                   );
                 } else {
-                  // Voer echte Jupiter swap uit
+                  // Voer echte Jupiter swap uit via proxy
                   const result = await Wallet.executeSwap(
                     token.address,
                     settings.tradeAmount,
-                    100 // 1% slippage tolerance
+                    150 // 1.5% slippage voor memecoins
                   );
 
                   if (result && result.signature) {
-                    // Registreer als live trade in portfolio
                     const liveTrade = await TradeManager.openLiveTrade(signal, settings, result);
                     if (_onSignal) _onSignal(signal, liveTrade);
                   }

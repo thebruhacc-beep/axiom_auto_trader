@@ -176,9 +176,12 @@ const Wallet = (() => {
         },
       }),
     });
-    if (!qr.ok) throw new Error('Quote proxy fout: ' + qr.status);
+    if (!qr.ok) {
+      const errText = await qr.text().catch(() => '');
+      throw new Error('Quote fout ' + qr.status + ': ' + errText.slice(0,100));
+    }
     const quote = await qr.json();
-    if (quote.error) throw new Error('Jupiter: ' + quote.error);
+    if (quote.error) throw new Error('Jupiter quote: ' + (quote.error.msg || quote.error));
 
     const outAmount   = parseInt(quote.outAmount || '0');
     const priceImpact = parseFloat(quote.priceImpactPct || '0');
@@ -200,9 +203,12 @@ const Wallet = (() => {
         },
       }),
     });
-    if (!sr.ok) throw new Error('Swap proxy fout: ' + sr.status);
+    if (!sr.ok) {
+      const errText = await sr.text().catch(() => '');
+      throw new Error('Swap fout ' + sr.status + ': ' + errText.slice(0,100));
+    }
     const swapData = await sr.json();
-    if (swapData.error) throw new Error('Swap: ' + swapData.error);
+    if (swapData.error) throw new Error('Swap: ' + (swapData.error.msg || swapData.error));
 
     Storage.addLog('info', '✍️ Phantom opent voor bevestiging...');
     const signature = await _signAndSend(swapData.swapTransaction);
