@@ -1,29 +1,50 @@
-// api/rpc.js - Vercel Serverless Function (CommonJS)
+// api/rpc.js - Solana RPC proxy met https module (geen fetch)
+const https = require('https');
+
+function rpcCall(url, body) {
+  return new Promise((resolve, reject) => {
+    const payload  = JSON.stringify(body);
+    const urlObj   = new URL(url);
+    const options  = {
+      hostname: urlObj.hostname,
+      path:     urlObj.pathname + urlObj.search,
+      method:   'POST',
+      headers:  {
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+    req.write(payload);
+    req.end();
+  });
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // GET request voor simpele test
+  // GET test
   if (req.method === 'GET') {
-    const address = req.query && req.query.address;
-    if (!address) return res.status(200).json({ status: 'ok', message: 'Gebruik POST met {address}' });
-    return await fetchBalance(address, res);
+    return res.status(200).json({ status: 'ok', message: 'RPC proxy actief' });
   }
 
-  if (req.method === 'POST') {
-    const body = req.body || {};
-    const address = body.address;
-    if (!address) return res.status(400).json({ error: 'Geen adres' });
-    return await fetchBalance(address, res);
-  }
+  const address = (req.body || {}).address;
+  if (!address) return res.status(400).json({ error: 'Geen adres' });
 
-  return res.status(405).json({ error: 'Method not allowed' });
-};
+  const body = { jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address, { commitment: 'confirmed' }] };
 
-async function fetchBalance(address, res) {
   const endpoints = [
     'https://api.mainnet-beta.solana.com',
     'https://rpc.ankr.com/solana',
@@ -31,36 +52,14 @@ async function fetchBalance(address, res) {
     'https://solana.publicnode.com',
   ];
 
-  const body = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'getBalance',
-    params: [address, { commitment: 'confirmed' }],
-  });
-
   for (const url of endpoints) {
-    try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      if (!r.ok) continue;
-      const d = await r.json();
-      if (d.error) continue;
-      const lamports = (d.result && typeof d.result.value === 'number')
-        ? d.result.value
-        : (typeof d.result === 'number' ? d.result : null);
-      if (lamports !== null && lamports >= 0) {
-        return res.status(200).json({
-          sol: lamports / 1e9,
-          lamports,
-          address,
-          source: url.split('?')[0],
-        });
-      }
-    } catch(e) { continue; }
+    const d = await rpcCall(url, body);
+    if (!d || d.error) continue;
+    const lamports = d.result && typeof d.result.value === 'number' ? d.result.value : typeof d.result === 'number' ? d.result : null;
+    if (lamports !== null && lamports >= 0) {
+      return res.status(200).json({ sol: lamports / 1e9, lamports, address, source: url.split('?')[0] });
+    }
   }
 
-  return res.status(503).json({ error: 'Alle RPC endpoints onbereikbaar', address });
-}
+  return res.status(503).json({ error: 'Alle RPC endpoints faalden', address });
+};
