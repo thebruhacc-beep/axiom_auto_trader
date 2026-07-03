@@ -167,95 +167,76 @@ const App = (() => {
   // ── WALLET ────────────────────────────────────────────────
   function _setupWalletBtns() {
 
-    // Phantom verbinden
+    // ── Phantom verbinden ────────────────────────────────────
     document.getElementById('btn-connect-phantom')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-connect-phantom');
+      btn.disabled = true; btn.textContent = '...';
       try {
         const info = await Wallet.connect();
-        UI.updateWalletUI({ isConnected: true, publicKey: info.publicKey, balance: info.balance, isPhantom: true });
-        UI.toast('👻 Phantom verbonden | ' + info.balance.toFixed(4) + ' SOL', 'success');
+        UI.updateWalletUI(Storage.getWallet());
+        UI.toast('👻 Verbonden | ' + info.balance.toFixed(4) + ' SOL', 'success');
+        _refreshKPIs();
       } catch(err) {
-        UI.toast(err.message, 'error');
+        UI.toast(err.message || 'Verbinding mislukt', 'error');
       }
+      btn.disabled = false; btn.textContent = '👻 Phantom';
     });
 
-    // Adres invoeren knop — toon invoerveld
+    // ── Adres invoer tonen ───────────────────────────────────
     document.getElementById('btn-connect-address')?.addEventListener('click', () => {
-      var addrInput = document.getElementById('wallet-address-input');
-      var connectBtns = document.getElementById('wallet-connect-btns');
-      if (addrInput)   addrInput.style.display   = 'block';
-      if (connectBtns) connectBtns.style.display = 'none';
+      document.getElementById('wallet-address-input').style.display = 'block';
+      document.getElementById('wallet-connect-btns').style.display  = 'none';
       document.getElementById('input-wallet-address')?.focus();
     });
 
-    // Adres annuleren
     document.getElementById('btn-cancel-address')?.addEventListener('click', () => {
-      var addrInput   = document.getElementById('wallet-address-input');
-      var connectBtns = document.getElementById('wallet-connect-btns');
-      if (addrInput)   addrInput.style.display   = 'none';
-      if (connectBtns) connectBtns.style.display = 'flex';
+      document.getElementById('wallet-address-input').style.display = 'none';
+      document.getElementById('wallet-connect-btns').style.display  = 'flex';
     });
 
-    // Adres bevestigen
-    document.getElementById('btn-confirm-address')?.addEventListener('click', async () => {
-      var input   = document.getElementById('input-wallet-address');
-      var address = input ? input.value.trim() : '';
+    // ── Adres bevestigen ─────────────────────────────────────
+    async function confirmAddress() {
+      const input   = document.getElementById('input-wallet-address');
+      const address = (input?.value || '').trim();
       if (!address) { UI.toast('Vul een wallet adres in', 'warning'); return; }
-
-      var btn = document.getElementById('btn-confirm-address');
-      btn.disabled    = true;
-      btn.textContent = '...';
-
+      const btn = document.getElementById('btn-confirm-address');
+      btn.disabled = true; btn.textContent = '...';
       try {
         const info = await Wallet.connectByAddress(address);
-        UI.updateWalletUI({
-          isConnected: true,
-          publicKey:   info.publicKey,
-          balance:     info.balance,
-          isPhantom:   false,
-        });
+        UI.updateWalletUI(Storage.getWallet());
         UI.toast('📋 Adres ingesteld | ' + info.balance.toFixed(4) + ' SOL', 'success');
-        if (info.balance === 0) {
-          UI.toast('⚠️ Saldo toont 0 — adres correct? RPC kan even traag zijn.', 'warning', 6000);
-        }
+        _refreshKPIs();
       } catch(err) {
         UI.toast(err.message, 'error');
-        var connectBtns = document.getElementById('wallet-connect-btns');
-        var addrInput   = document.getElementById('wallet-address-input');
-        if (connectBtns) connectBtns.style.display = 'flex';
-        if (addrInput)   addrInput.style.display   = 'none';
+        document.getElementById('wallet-connect-btns').style.display  = 'flex';
+        document.getElementById('wallet-address-input').style.display = 'none';
       }
+      btn.disabled = false; btn.textContent = '✓ Bevestig';
+    }
 
-      btn.disabled    = false;
-      btn.textContent = '✓ Bevestig';
+    document.getElementById('btn-confirm-address')?.addEventListener('click', confirmAddress);
+    document.getElementById('input-wallet-address')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') confirmAddress();
     });
 
-    // Enter key in adres veld
-    document.getElementById('input-wallet-address')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') document.getElementById('btn-confirm-address')?.click();
-    });
-
-    // Disconnect
+    // ── Disconnect ───────────────────────────────────────────
     document.getElementById('btn-disconnect-wallet')?.addEventListener('click', async () => {
       await Wallet.disconnect();
       UI.updateWalletUI({ isConnected: false, publicKey: null, balance: null });
       UI.toast('Wallet verbroken', 'info');
+      _refreshKPIs();
     });
   }
 
   async function _tryRestoreWallet() {
     const stored = Storage.getWallet();
-    UI.updateWalletUI(stored);
-    if (stored && stored.isConnected && stored.publicKey) {
+    UI.updateWalletUI(stored || { isConnected: false });
+    if (stored?.isConnected && stored?.publicKey) {
       const info = await Wallet.tryAutoConnect().catch(() => null);
       if (info) {
-        UI.updateWalletUI({
-          isConnected: true,
-          publicKey:   info.publicKey,
-          balance:     info.balance,
-          isPhantom:   stored.isPhantom || false,
-        });
+        UI.updateWalletUI(Storage.getWallet());
+        _refreshKPIs();
       } else {
-        // Herstel mislukt — reset wallet
         UI.updateWalletUI({ isConnected: false, publicKey: null, balance: null });
       }
     }

@@ -21,8 +21,19 @@ const UI = (() => {
     const bal = portfolio.currentBalance || 0;
     const pnl = portfolio.totalPnlPercent || 0;
 
+    // Toon paper trading balance
     _txt('kpi-balance', bal.toFixed(5) + ' SOL');
-    _txt('kpi-balance-usd', '≈ $' + (bal * 170).toFixed(2) + ' | start: ' + (portfolio.startingBalance || 0).toFixed(5) + ' SOL');
+    _txt('kpi-balance-usd', '📄 Paper | Start: ' + (portfolio.startingBalance || 0).toFixed(5) + ' SOL');
+
+    // Toon echte wallet balance als verbonden
+    const wallet = Storage.getWallet();
+    if (wallet && wallet.isConnected && wallet.publicKey) {
+      const realBal = wallet.balance || 0;
+      _txt('kpi-balance', realBal.toFixed(4) + ' SOL');
+      const settings = Storage.getSettings();
+      const mode = settings.tradingMode === 'live' ? '🔴 Live' : '📄 Paper';
+      _txt('kpi-balance-usd', mode + ' | Wallet: ' + (wallet.publicKey.slice(0,6)) + '...');
+    }
 
     const pnlEl = _el('kpi-pnl');
     if (pnlEl) {
@@ -58,37 +69,30 @@ const UI = (() => {
 
   // ── WALLET UI ─────────────────────────────────────────────
   function updateWalletUI(wallet) {
-    var dot          = _el('wallet-dot');
-    var label        = _el('wallet-label');
-    var connectBtns  = _el('wallet-connect-btns');
-    var disconnectBtn= _el('btn-disconnect-wallet');
-    var addrInput    = _el('wallet-address-input');
+    var dot           = _el('wallet-dot');
+    var label         = _el('wallet-label');
+    var connectBtns   = _el('wallet-connect-btns');
+    var disconnectBtn = _el('btn-disconnect-wallet');
+    var addrInput     = _el('wallet-address-input');
 
     if (wallet && wallet.isConnected && wallet.publicKey) {
-      var short = wallet.publicKey.slice(0,6) + '…' + wallet.publicKey.slice(-4);
+      var short = wallet.publicKey.slice(0,6) + '...' + wallet.publicKey.slice(-4);
       var bal   = (wallet.balance || 0).toFixed(4);
-      var type  = wallet.isPhantom ? '👻' : '📋';
+      var type  = wallet.readOnly ? '📋' : '👻';
 
       if (dot)   dot.className     = 'wallet-dot wallet-dot--on';
       if (label) label.textContent = type + ' ' + short + ' | ' + bal + ' SOL';
 
-      // Toon alleen disconnect knop
-      if (connectBtns)   connectBtns.style.display   = 'none';
-      if (addrInput)     addrInput.style.display      = 'none';
-      if (disconnectBtn) disconnectBtn.style.display  = 'block';
-
-      // Waarschuwing als geen Phantom (read-only)
-      if (!wallet.isPhantom) {
-        if (label) label.title = 'Read-only adres — live trades vereisen Phantom wallet';
-      }
+      if (connectBtns)   connectBtns.style.display  = 'none';
+      if (addrInput)     addrInput.style.display     = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = 'block';
     } else {
       if (dot)   dot.className     = 'wallet-dot wallet-dot--off';
       if (label) label.textContent = 'Niet verbonden';
 
-      // Toon connect knoppen
-      if (connectBtns)   connectBtns.style.display   = 'flex';
-      if (addrInput)     addrInput.style.display      = 'none';
-      if (disconnectBtn) disconnectBtn.style.display  = 'none';
+      if (connectBtns)   connectBtns.style.display  = 'flex';
+      if (addrInput)     addrInput.style.display     = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = 'none';
     }
   }
 
