@@ -162,19 +162,16 @@ const Wallet = (() => {
     Storage.addLog('info', '🔄 Quote ophalen: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...');
 
     // Quote via proxy
-    const qr = await fetch('/api/jupiter', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'quote',
-        params: {
-          inputMint:        SOL_MINT,
-          outputMint:       tokenMint,
-          amount:           lamports.toString(),
-          slippageBps:      slippageBps.toString(),
-          onlyDirectRoutes: 'false',
-        },
-      }),
+    // Jupiter heeft CORS headers — direct aanroepen vanuit browser
+    const quoteParams = new URLSearchParams({
+      inputMint:        SOL_MINT,
+      outputMint:       tokenMint,
+      amount:           lamports.toString(),
+      slippageBps:      slippageBps.toString(),
+      onlyDirectRoutes: 'false',
+    });
+    const qr = await fetch('https://quote-api.jup.ag/v6/quote?' + quoteParams, {
+      headers: { 'Accept': 'application/json' },
     });
     if (!qr.ok) {
       const errText = await qr.text().catch(() => '');
@@ -189,18 +186,15 @@ const Wallet = (() => {
     if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge impact: ' + priceImpact.toFixed(1) + '%');
 
     // Swap transactie via proxy
-    const sr = await fetch('/api/jupiter', {
+    const sr = await fetch('https://quote-api.jup.ag/v6/swap', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        action: 'swap',
-        params: {
-          quoteResponse:             quote,
-          userPublicKey:             _publicKey,
-          wrapAndUnwrapSol:          true,
-          dynamicComputeUnitLimit:   true,
-          prioritizationFeeLamports: 'auto',
-        },
+        quoteResponse:             quote,
+        userPublicKey:             _publicKey,
+        wrapAndUnwrapSol:          true,
+        dynamicComputeUnitLimit:   true,
+        prioritizationFeeLamports: 'auto',
       }),
     });
     if (!sr.ok) {
@@ -236,43 +230,36 @@ const Wallet = (() => {
     slippageBps = slippageBps || 150;
     const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
 
-    const qr = await fetch('/api/jupiter', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'quote',
-        params: {
-          inputMint:   tokenMint,
-          outputMint:  SOL_MINT,
-          amount:      rawAmount.toString(),
-          slippageBps: slippageBps.toString(),
-        },
-      }),
+    const sellParams = new URLSearchParams({
+      inputMint:   tokenMint,
+      outputMint:  SOL_MINT,
+      amount:      rawAmount.toString(),
+      slippageBps: slippageBps.toString(),
     });
-    if (!qr.ok) throw new Error('Sell quote fout');
+    const qr = await fetch('https://quote-api.jup.ag/v6/quote?' + sellParams, {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!qr.ok) throw new Error('Sell quote fout: ' + qr.status);
     const quote = await qr.json();
-    if (quote.error) throw new Error('Sell Jupiter: ' + quote.error);
+    if (quote.error) throw new Error('Sell Jupiter: ' + (quote.error.msg || quote.error));
 
     const outSOL = parseInt(quote.outAmount || '0') / 1e9;
     Storage.addLog('info', '📊 Sell: → ' + outSOL.toFixed(5) + ' SOL');
 
-    const sr = await fetch('/api/jupiter', {
+    const sr = await fetch('https://quote-api.jup.ag/v6/swap', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        action: 'swap',
-        params: {
-          quoteResponse:             quote,
-          userPublicKey:             _publicKey,
-          wrapAndUnwrapSol:          true,
-          dynamicComputeUnitLimit:   true,
-          prioritizationFeeLamports: 'auto',
-        },
+        quoteResponse:             quote,
+        userPublicKey:             _publicKey,
+        wrapAndUnwrapSol:          true,
+        dynamicComputeUnitLimit:   true,
+        prioritizationFeeLamports: 'auto',
       }),
     });
-    if (!sr.ok) throw new Error('Sell swap fout');
+    if (!sr.ok) throw new Error('Sell swap fout: ' + sr.status);
     const swapData = await sr.json();
-    if (swapData.error) throw new Error('Sell swap: ' + swapData.error);
+    if (swapData.error) throw new Error('Sell swap: ' + (swapData.error.msg || swapData.error));
 
     const signature = await _signAndSend(swapData.swapTransaction);
     const sig = String(signature?.signature ?? signature);
