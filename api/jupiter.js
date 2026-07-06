@@ -1,43 +1,34 @@
-// api/jupiter.js - Jupiter proxy met https module (geen fetch)
+// api/jupiter.js - Jupiter proxy zonder externe dependencies
 const https = require('https');
+const http  = require('http');
 
-function httpsGet(url) {
+function request(urlStr, method, body) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'Accept': 'application/json' } }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch(e) { resolve({ status: res.statusCode, body: data }); }
-      });
-    }).on('error', reject);
-  });
-}
-
-function httpsPost(url, payload) {
-  return new Promise((resolve, reject) => {
-    const body    = JSON.stringify(payload);
-    const urlObj  = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path:     urlObj.pathname + urlObj.search,
-      method:   'POST',
+    const url   = new URL(urlStr);
+    const lib   = url.protocol === 'https:' ? https : http;
+    const data  = body ? JSON.stringify(body) : null;
+    const opts  = {
+      hostname: url.hostname,
+      port:     url.port || (url.protocol === 'https:' ? 443 : 80),
+      path:     url.pathname + url.search,
+      method:   method || 'GET',
       headers:  {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'Content-Length': Buffer.byteLength(body),
+        'Accept':       'application/json',
+        'Content-Type': 'application/json',
+        ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
       },
     };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+    const req = lib.request(opts, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
       res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch(e) { resolve({ status: res.statusCode, body: data }); }
+        try { resolve({ ok: res.statusCode < 400, status: res.statusCode, data: JSON.parse(d) }); }
+        catch(e) { resolve({ ok: false, status: res.statusCode, data: d }); }
       });
     });
     req.on('error', reject);
-    req.write(body);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+    if (data) req.write(data);
     req.end();
   });
 }
@@ -53,25 +44,16 @@ module.exports = async function handler(req, res) {
 
   try {
     if (action === 'quote') {
-      const qs  = Object.entries(params || {})
-        .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v))
-        .join('&');
-      const url = 'https://quote-api.jup.ag/v6/quote?' + qs;
-      const r   = await httpsGet(url);
-      if (r.status !== 200) return res.status(r.status).json({ error: 'Jupiter quote fout', detail: r.body });
-      return res.status(200).json(r.body);
+      const qs  = Object.entries(params || {}).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      const r   = await request('https://quote-api.jup.ag/v6/quote?' + qs, 'GET');
+      return res.status(r.status).json(r.data);
     }
-
     if (action === 'swap') {
-      const r = await httpsPost('https://quote-api.jup.ag/v6/swap', params || {});
-      if (r.status !== 200) return res.status(r.status).json({ error: 'Jupiter swap fout', detail: r.body });
-      return res.status(200).json(r.body);
+      const r = await request('https://quote-api.jup.ag/v6/swap', 'POST', params);
+      return res.status(r.status).json(r.data);
     }
-
-    return res.status(400).json({ error: 'Onbekende actie: ' + action });
-
+    return res.status(400).json({ error: 'Onbekende actie' });
   } catch(e) {
-    console.error('[jupiter]', e.message);
     return res.status(500).json({ error: e.message });
   }
 };

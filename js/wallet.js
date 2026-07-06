@@ -163,22 +163,21 @@ const Wallet = (() => {
 
     // Quote via proxy
     // Jupiter heeft CORS headers — direct aanroepen vanuit browser
-    const quoteParams = new URLSearchParams({
-      inputMint:        SOL_MINT,
-      outputMint:       tokenMint,
-      amount:           lamports.toString(),
-      slippageBps:      slippageBps.toString(),
-      onlyDirectRoutes: 'false',
+    // Jupiter via eigen proxy (CORS fix)
+    const qr = await fetch('/api/jupiter', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'quote', params: {
+        inputMint:        SOL_MINT,
+        outputMint:       tokenMint,
+        amount:           lamports.toString(),
+        slippageBps:      slippageBps.toString(),
+        onlyDirectRoutes: 'false',
+      }}),
     });
-    const qr = await fetch('https://quote-api.jup.ag/v6/quote?' + quoteParams, {
-      headers: { 'Accept': 'application/json' },
-    });
-    if (!qr.ok) {
-      const errText = await qr.text().catch(() => '');
-      throw new Error('Quote fout ' + qr.status + ': ' + errText.slice(0,100));
-    }
+    if (!qr.ok) throw new Error('Quote proxy fout ' + qr.status);
     const quote = await qr.json();
-    if (quote.error) throw new Error('Jupiter quote: ' + (quote.error.msg || quote.error));
+    if (quote.error) throw new Error('Jupiter quote: ' + (quote.error.msg || JSON.stringify(quote.error)));
 
     const outAmount   = parseInt(quote.outAmount || '0');
     const priceImpact = parseFloat(quote.priceImpactPct || '0');
@@ -186,23 +185,20 @@ const Wallet = (() => {
     if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge impact: ' + priceImpact.toFixed(1) + '%');
 
     // Swap transactie via proxy
-    const sr = await fetch('https://quote-api.jup.ag/v6/swap', {
+    const sr = await fetch('/api/jupiter', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'swap', params: {
         quoteResponse:             quote,
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
         prioritizationFeeLamports: 'auto',
-      }),
+      }}),
     });
-    if (!sr.ok) {
-      const errText = await sr.text().catch(() => '');
-      throw new Error('Swap fout ' + sr.status + ': ' + errText.slice(0,100));
-    }
+    if (!sr.ok) throw new Error('Swap proxy fout ' + sr.status);
     const swapData = await sr.json();
-    if (swapData.error) throw new Error('Swap: ' + (swapData.error.msg || swapData.error));
+    if (swapData.error) throw new Error('Swap: ' + (swapData.error.msg || JSON.stringify(swapData.error)));
 
     Storage.addLog('info', '✍️ Phantom opent voor bevestiging...');
     const signature = await _signAndSend(swapData.swapTransaction);
@@ -230,36 +226,37 @@ const Wallet = (() => {
     slippageBps = slippageBps || 150;
     const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
 
-    const sellParams = new URLSearchParams({
-      inputMint:   tokenMint,
-      outputMint:  SOL_MINT,
-      amount:      rawAmount.toString(),
-      slippageBps: slippageBps.toString(),
+    const qr = await fetch('/api/jupiter', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'quote', params: {
+        inputMint:   tokenMint,
+        outputMint:  SOL_MINT,
+        amount:      rawAmount.toString(),
+        slippageBps: slippageBps.toString(),
+      }}),
     });
-    const qr = await fetch('https://quote-api.jup.ag/v6/quote?' + sellParams, {
-      headers: { 'Accept': 'application/json' },
-    });
-    if (!qr.ok) throw new Error('Sell quote fout: ' + qr.status);
+    if (!qr.ok) throw new Error('Sell quote proxy fout ' + qr.status);
     const quote = await qr.json();
-    if (quote.error) throw new Error('Sell Jupiter: ' + (quote.error.msg || quote.error));
+    if (quote.error) throw new Error('Sell: ' + (quote.error.msg || JSON.stringify(quote.error)).slice(0,100));
 
     const outSOL = parseInt(quote.outAmount || '0') / 1e9;
     Storage.addLog('info', '📊 Sell: → ' + outSOL.toFixed(5) + ' SOL');
 
-    const sr = await fetch('https://quote-api.jup.ag/v6/swap', {
+    const sr = await fetch('/api/jupiter', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'swap', params: {
         quoteResponse:             quote,
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
         prioritizationFeeLamports: 'auto',
-      }),
+      }}),
     });
-    if (!sr.ok) throw new Error('Sell swap fout: ' + sr.status);
+    if (!sr.ok) throw new Error('Sell swap proxy fout ' + sr.status);
     const swapData = await sr.json();
-    if (swapData.error) throw new Error('Sell swap: ' + (swapData.error.msg || swapData.error));
+    if (swapData.error) throw new Error('Sell swap: ' + (swapData.error.msg || JSON.stringify(swapData.error)).slice(0,100));
 
     const signature = await _signAndSend(swapData.swapTransaction);
     const sig = String(signature?.signature ?? signature);
