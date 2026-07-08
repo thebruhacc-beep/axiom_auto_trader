@@ -149,10 +149,11 @@ const TokenFetcher = (() => {
   // ── RUGCHECK ──────────────────────────────────────────────
   async function _fetchRugCheck(address) {
     try {
-      var r = await _ft(
-        'https://api.rugcheck.xyz/v1/tokens/' + address + '/report/summary',
-        3000
-      );
+      var r = await fetch('/api/rpc', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'rugcheck', tokenAddress: address }),
+      });
       if (!r.ok) return null;
       var d = await r.json();
       if (!d) return null;
