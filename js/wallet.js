@@ -125,26 +125,91 @@ const Wallet = (() => {
     const provider = _getProvider();
     if (!provider) throw new Error('Phantom niet gevonden');
 
-    // Methode 1: Buffer approach
+    if (typeof solanaWeb3 === 'undefined') {
+      throw new Error('Solana web3.js niet geladen — herlaad de pagina');
+    }
+
+    // Bouw een ECHTE VersionedTransaction (Phantom accepteert geen nep-object)
+    const bytes = Uint8Array.from(atob(base64Tx), c => c.charCodeAt(0));
+    const transaction = solanaWeb3.VersionedTransaction.deserialize(bytes);
+
     try {
-      const bytes  = Uint8Array.from(atob(base64Tx), c => c.charCodeAt(0));
-      const result = await provider.signAndSendTransaction({
-        serialize: () => bytes,
-        signatures: [],
-      });
+      const result = await provider.signAndSendTransaction(transaction);
       return result?.signature ?? result;
     } catch(e1) {
-      // Methode 2: request API
+      // Fallback: lage-niveau request API — Phantom verwacht 'message' (base58), niet 'transaction'
       try {
+        const bs58Msg = solanaWeb3.utils
+          ? solanaWeb3.utils.bs58.encode(transaction.serialize())
+          : _toBase58(transaction.serialize());
         const result = await provider.request({
           method: 'signAndSendTransaction',
-          params: { transaction: base64Tx },
+          params: { message: bs58Msg },
         });
         return result?.signature ?? result;
       } catch(e2) {
-        throw new Error('Signing mislukt: ' + e2.message);
+        throw new Error('Signing mislukt: ' + (e2.message || e1.message));
       }
     }
+  }
+
+  // Kleine base58 fallback-encoder (voor het geval solanaWeb3.utils.bs58 niet bestaat)
+  function _toBase58(buffer) {
+    const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let digits = [0];
+    for (let i = 0; i < buffer.length; i++) {
+      let carry = buffer[i];
+      for (let j = 0; j < digits.length; j++) { carry += digits[j] << 8; digits[j] = carry % 58; carry = (carry / 58) | 0; }
+      while (carry > 0) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+    }
+    let s = '';
+    for (let k = 0; buffer[k] === 0 && k < buffer.length - 1; k++) s += '1';
+    for (let q = digits.length - 1; q >= 0; q--) s += ALPHABET[digits[q]];
+    return s;
+  }
+
+  // ── WACHT OP ON-CHAIN BEVESTIGING ─────────────────────────
+  // Cruciaal: een signature terugkrijgen van Phantom betekent NIET dat de
+  // transactie ook echt geslaagd is op de chain. Zonder deze check registreert
+  // de app "gekochte" tokens die er in werkelijkheid nooit gekomen zijn.
+  async function _confirmTransaction(signature, timeoutMs = 30000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const r = await fetch('/api/rpc', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'getSignatureStatuses', signatures: [signature] }),
+        });
+        const d = await r.json();
+        const status = d?.result?.value?.[0];
+        if (status) {
+          if (status.err) throw new Error('Transactie faalde on-chain: ' + JSON.stringify(status.err));
+          if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+            return true;
+          }
+        }
+      } catch(e) {
+        if (e.message.startsWith('Transactie faalde')) throw e;
+        // netwerkfout tijdens polling: gewoon opnieuw proberen
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    throw new Error('Bevestiging timeout — controleer handmatig op solscan.io');
+  }
+
+  // ── TOKEN DECIMALS OPVRAGEN (voor correcte tokenAmount) ────
+  async function _getTokenDecimals(mint) {
+    try {
+      const r = await fetch('/api/rpc', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'getTokenSupply', mint }),
+      });
+      const d = await r.json();
+      if (typeof d.decimals === 'number') return d.decimals;
+    } catch(e) { /* val terug op default */ }
+    return 6; // meeste pump.fun tokens gebruiken 6 decimals
   }
 
   // ── KOPEN VIA JUPITER PROXY ───────────────────────────────
@@ -204,7 +269,13 @@ const Wallet = (() => {
     const signature = await _signAndSend(swapData.swapTransaction);
     const sig = String(signature?.signature ?? signature);
 
-    Storage.addLog('success', '✅ GEKOCHT! ' + sig.slice(0,16) + '... | solscan.io/tx/' + sig);
+    Storage.addLog('info', '⏳ Wachten op on-chain bevestiging...');
+    await _confirmTransaction(sig);
+
+    Storage.addLog('success', '✅ GEKOCHT (bevestigd)! ' + sig.slice(0,16) + '... | solscan.io/tx/' + sig);
+
+    const decimals = await _getTokenDecimals(tokenMint);
+    const tokenAmountReal = outAmount / Math.pow(10, decimals);
 
     // Refresh balance na 4 sec
     setTimeout(async () => {
@@ -213,7 +284,7 @@ const Wallet = (() => {
       if (typeof App !== 'undefined') App.onWalletChange();
     }, 4000);
 
-    return { signature: sig, outAmount };
+    return { signature: sig, outAmount: tokenAmountReal, decimals };
   }
 
   // ── VERKOPEN VIA JUPITER PROXY ────────────────────────────
@@ -261,7 +332,10 @@ const Wallet = (() => {
     const signature = await _signAndSend(swapData.swapTransaction);
     const sig = String(signature?.signature ?? signature);
 
-    Storage.addLog('success', '✅ VERKOCHT! ' + outSOL.toFixed(5) + ' SOL | ' + sig.slice(0,16) + '...');
+    Storage.addLog('info', '⏳ Wachten op on-chain bevestiging...');
+    await _confirmTransaction(sig);
+
+    Storage.addLog('success', '✅ VERKOCHT (bevestigd)! ' + outSOL.toFixed(5) + ' SOL | ' + sig.slice(0,16) + '...');
 
     setTimeout(async () => {
       const b = await getBalance();

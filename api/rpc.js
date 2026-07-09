@@ -40,17 +40,52 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ status: 'ok', message: 'RPC proxy actief' });
   }
 
-  const address = (req.body || {}).address;
-  if (!address) return res.status(400).json({ error: 'Geen adres' });
-
-  const body = { jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address, { commitment: 'confirmed' }] };
-
   const endpoints = [
     'https://api.mainnet-beta.solana.com',
     'https://rpc.ankr.com/solana',
     'https://mainnet.helius-rpc.com/?api-key=15319d07-b4d3-4376-905b-3885f0bb1211',
     'https://solana.publicnode.com',
   ];
+
+  const action = (req.body || {}).action;
+
+  // ── TRANSACTIE STATUS CHECK (voor bevestiging na buy/sell) ──
+  if (action === 'getSignatureStatuses') {
+    const signatures = (req.body || {}).signatures;
+    if (!signatures || !signatures.length) return res.status(400).json({ error: 'Geen signatures' });
+
+    const body = {
+      jsonrpc: '2.0', id: 1, method: 'getSignatureStatuses',
+      params: [signatures, { searchTransactionHistory: true }],
+    };
+
+    for (const url of endpoints) {
+      const d = await rpcCall(url, body);
+      if (!d || d.error) continue;
+      if (d.result) return res.status(200).json({ result: d.result, source: url.split('?')[0] });
+    }
+    return res.status(503).json({ error: 'Alle RPC endpoints faalden' });
+  }
+
+  // ── TOKEN DECIMALS (via getTokenSupply) ──────────────────────
+  if (action === 'getTokenSupply') {
+    const mint = (req.body || {}).mint;
+    if (!mint) return res.status(400).json({ error: 'Geen mint' });
+
+    const body = { jsonrpc: '2.0', id: 1, method: 'getTokenSupply', params: [mint] };
+    for (const url of endpoints) {
+      const d = await rpcCall(url, body);
+      if (!d || d.error) continue;
+      if (d.result?.value) return res.status(200).json({ decimals: d.result.value.decimals, source: url.split('?')[0] });
+    }
+    return res.status(503).json({ error: 'Alle RPC endpoints faalden' });
+  }
+
+  // ── SALDO OPVRAGEN (bestaand gedrag) ─────────────────────────
+  const address = (req.body || {}).address;
+  if (!address) return res.status(400).json({ error: 'Geen adres' });
+
+  const body = { jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address, { commitment: 'confirmed' }] };
 
   for (const url of endpoints) {
     const d = await rpcCall(url, body);
