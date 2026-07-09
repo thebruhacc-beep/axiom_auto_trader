@@ -193,7 +193,7 @@ const TradeManager = (() => {
         if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
           Storage.addLog('warning', '🛑 LIVE STOP LOSS: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
-            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 300);
+            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 300, true);
           } catch(e) {
             Storage.addLog('error', 'Live SL sell mislukt: ' + e.message);
           }
@@ -226,7 +226,7 @@ const TradeManager = (() => {
           Storage.addLog('success', '💰 LIVE TP1 (50%): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
             const halfTokens = trade.tokenAmount * 0.5;
-            await Wallet.executeSell(trade.tokenAddress, halfTokens, 6, 150);
+            await Wallet.executeSell(trade.tokenAddress, halfTokens, 6, 150, false);
           } catch(e) {
             Storage.addLog('error', 'Live TP1 sell mislukt: ' + e.message);
           }
@@ -255,7 +255,7 @@ const TradeManager = (() => {
           Storage.addLog('success', '🚀 LIVE TP2 (rest): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
             const restTokens = trade.tokenAmount * 0.5;
-            await Wallet.executeSell(trade.tokenAddress, restTokens, 6, 150);
+            await Wallet.executeSell(trade.tokenAddress, restTokens, 6, 150, true);
           } catch(e) {
             Storage.addLog('error', 'Live TP2 sell mislukt: ' + e.message);
           }
@@ -273,6 +273,14 @@ const TradeManager = (() => {
       // ── TIMEOUT: token doet niets na 4 uur ───────────────
       const holdMinutes = (Date.now() - trade.entryTime) / 60000;
       if (holdMinutes > 240 && !trade.isPartiallyExited && trade.pnlPercent < 10) {
+        if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          Storage.addLog('info', '⏰ LIVE TIMEOUT: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
+          try {
+            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 200, true);
+          } catch(e) {
+            Storage.addLog('error', 'Live timeout sell mislukt: ' + e.message);
+          }
+        }
         _executeClose(trade, current, 'CLOSED_TIMEOUT', portfolio, solPrice);
         toClose.push(trade.id);
         Storage.addLog('warning',
@@ -335,6 +343,19 @@ const TradeManager = (() => {
     const trade    = openTrades[idx];
     const portfolio= Storage.getPortfolio();
     const solPrice = await _getSolPrice();
+
+    // Live positie: eerst écht verkopen via Jupiter voordat we 'm sluiten
+    if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+      Storage.addLog('info', '❌ LIVE HANDMATIG SLUITEN: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
+      try {
+        const remainingFraction = trade.isPartiallyExited ? 0.5 : 1.0;
+        const sellTokens = trade.tokenAmount * remainingFraction;
+        await Wallet.executeSell(trade.tokenAddress, sellTokens, 6, 200, true);
+      } catch(e) {
+        Storage.addLog('error', 'Live handmatige sell mislukt: ' + e.message + ' — positie NIET gesloten');
+        return false; // niet uit tracking verwijderen als de sell mislukte
+      }
+    }
 
     _executeClose(trade, trade.currentPrice, 'CLOSED_MANUAL', portfolio, solPrice);
     openTrades.splice(idx, 1);
@@ -426,5 +447,5 @@ const TradeManager = (() => {
     return p.toFixed(4);
   }
 
-  return { openPaperTrade, checkPositions, manualClose };
+  return { openPaperTrade, checkPositions, manualClose, openLiveTrade };
 })();

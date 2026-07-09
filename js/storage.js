@@ -56,7 +56,7 @@ const Storage = (() => {
     tradingMode:          'paper',
     startingCapital:      0.01,
     tradeAmount:          0.003,
-    maxOpenPositions:     2,
+    maxOpenPositions:     1,
     stopLossPercent:      15,
     takeProfit1Percent:   60,
     takeProfit2Percent:   200,

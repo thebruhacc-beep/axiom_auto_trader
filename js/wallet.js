@@ -212,6 +212,84 @@ const Wallet = (() => {
     return 6; // meeste pump.fun tokens gebruiken 6 decimals
   }
 
+  const TOKEN_PROGRAM_ID            = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const ASSOCIATED_TOKEN_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+
+  // ── TOKEN-ACCOUNT SLUITEN (rent terugvorderen na volledige verkoop) ──
+  // Elk nieuw token-account kost ~0.00203 SOL rent. Zodra je positie
+  // volledig verkocht is (saldo 0), kunnen we het account sluiten en
+  // die rent terugkrijgen — dit is de grootste besparing bij kleine trades.
+  async function closeTokenAccount(tokenMint) {
+    try {
+      if (typeof solanaWeb3 === 'undefined') return null;
+
+      const ownerPk = new solanaWeb3.PublicKey(_publicKey);
+      const mintPk  = new solanaWeb3.PublicKey(tokenMint);
+      const tokenProgramPk = new solanaWeb3.PublicKey(TOKEN_PROGRAM_ID);
+      const assocProgramPk = new solanaWeb3.PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID);
+
+      const [ata] = solanaWeb3.PublicKey.findProgramAddressSync(
+        [ownerPk.toBuffer(), tokenProgramPk.toBuffer(), mintPk.toBuffer()],
+        assocProgramPk
+      );
+
+      const bhResp = await fetch('/api/rpc', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'getLatestBlockhash' }),
+      });
+      const bh = await bhResp.json();
+      if (!bh.blockhash) return null;
+
+      const closeIx = new solanaWeb3.TransactionInstruction({
+        programId: tokenProgramPk,
+        keys: [
+          { pubkey: ata,    isSigner: false, isWritable: true },
+          { pubkey: ownerPk, isSigner: false, isWritable: true }, // rent gaat terug naar owner
+          { pubkey: ownerPk, isSigner: true,  isWritable: false },
+        ],
+        data: Uint8Array.from([9]), // TokenInstruction::CloseAccount
+      });
+
+      const msg = new solanaWeb3.TransactionMessage({
+        payerKey:        ownerPk,
+        recentBlockhash: bh.blockhash,
+        instructions:    [closeIx],
+      }).compileToV0Message();
+
+      const tx = new solanaWeb3.VersionedTransaction(msg);
+
+      Storage.addLog('info', '🧹 Token-account sluiten (rent terugvorderen)...');
+      const signature = await _signAndSend2(tx);
+      const sig = String(signature?.signature ?? signature);
+      await _confirmTransaction(sig, 20000);
+      Storage.addLog('success', '✅ Rent teruggekregen (~0.002 SOL) | ' + sig.slice(0,16) + '...');
+      return sig;
+    } catch(e) {
+      // Niet kritiek — als dit faalt (bv. account had nog stof/geen 0-saldo) laten we het gewoon staan
+      Storage.addLog('warning', '⚠️ Account sluiten mislukt (niet kritiek): ' + e.message);
+      return null;
+    }
+  }
+
+  // Losse signeerfunctie zonder de Jupiter-specifieke fallback-string-logica,
+  // hergebruikt dezelfde Phantom-signing-strategie als _signAndSend
+  async function _signAndSend2(transaction) {
+    const provider = _getProvider();
+    try {
+      const result = await provider.signAndSendTransaction(transaction);
+      return result?.signature ?? result;
+    } catch(e1) {
+      const bs58Msg = solanaWeb3.utils
+        ? solanaWeb3.utils.bs58.encode(transaction.serialize())
+        : _toBase58(transaction.serialize());
+      const result = await provider.request({
+        method: 'signAndSendTransaction',
+        params: { message: bs58Msg },
+      });
+      return result?.signature ?? result;
+    }
+  }
+
   // ── KOPEN VIA JUPITER PROXY ───────────────────────────────
   async function executeSwap(tokenMint, amountSol, slippageBps) {
     if (!_connected) throw new Error('Wallet niet verbonden');
@@ -250,6 +328,8 @@ const Wallet = (() => {
     if (priceImpact > 5) Storage.addLog('warning', '⚠️ Hoge impact: ' + priceImpact.toFixed(1) + '%');
 
     // Swap transactie via proxy
+    // LET OP: 'auto' kan tot 0.005 SOL priority fee kosten — veel te veel voor
+    // een kleine trade. We cappen 'm laag zodat fees minimaal blijven.
     const sr = await fetch('/api/jupiter', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -258,7 +338,9 @@ const Wallet = (() => {
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
-        prioritizationFeeLamports: 'auto',
+        prioritizationFeeLamports: {
+          priorityLevelWithMaxLamports: { priorityLevel: 'medium', maxLamports: 50000 }, // max 0.00005 SOL
+        },
       }}),
     });
     if (!sr.ok) throw new Error('Swap proxy fout ' + sr.status);
@@ -288,7 +370,7 @@ const Wallet = (() => {
   }
 
   // ── VERKOPEN VIA JUPITER PROXY ────────────────────────────
-  async function executeSell(tokenMint, tokenAmount, decimals, slippageBps) {
+  async function executeSell(tokenMint, tokenAmount, decimals, slippageBps, closeAccountAfter) {
     if (!_connected) throw new Error('Wallet niet verbonden');
     const stored = Storage.getWallet();
     if (stored.readOnly) throw new Error('Read-only adres — verbind Phantom');
@@ -322,7 +404,9 @@ const Wallet = (() => {
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
-        prioritizationFeeLamports: 'auto',
+        prioritizationFeeLamports: {
+          priorityLevelWithMaxLamports: { priorityLevel: 'medium', maxLamports: 50000 }, // max 0.00005 SOL
+        },
       }}),
     });
     if (!sr.ok) throw new Error('Sell swap proxy fout ' + sr.status);
@@ -336,6 +420,11 @@ const Wallet = (() => {
     await _confirmTransaction(sig);
 
     Storage.addLog('success', '✅ VERKOCHT (bevestigd)! ' + outSOL.toFixed(5) + ' SOL | ' + sig.slice(0,16) + '...');
+
+    // Rent terugvorderen als dit een VOLLEDIGE exit is (niet bij gedeeltelijke TP1-verkoop)
+    if (closeAccountAfter) {
+      await closeTokenAccount(tokenMint);
+    }
 
     setTimeout(async () => {
       const b = await getBalance();
@@ -351,6 +440,6 @@ const Wallet = (() => {
   return {
     isPhantomInstalled, isConnected, getPublicKey,
     connect, connectByAddress, disconnect, tryAutoConnect,
-    getBalance, executeSwap, executeSell,
+    getBalance, executeSwap, executeSell, closeTokenAccount,
   };
 })();

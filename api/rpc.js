@@ -67,6 +67,35 @@ module.exports = async function handler(req, res) {
     return res.status(503).json({ error: 'Alle RPC endpoints faalden' });
   }
 
+  // ── LATEST BLOCKHASH (voor zelf gebouwde transacties, bv. account sluiten) ──
+  if (action === 'getLatestBlockhash') {
+    const body = { jsonrpc: '2.0', id: 1, method: 'getLatestBlockhash', params: [{ commitment: 'confirmed' }] };
+    for (const url of endpoints) {
+      const d = await rpcCall(url, body);
+      if (!d || d.error) continue;
+      if (d.result?.value) return res.status(200).json({ blockhash: d.result.value.blockhash, source: url.split('?')[0] });
+    }
+    return res.status(503).json({ error: 'Alle RPC endpoints faalden' });
+  }
+
+  // ── RAW TRANSACTIE VERSTUREN (voor zelf gebouwde transacties) ────
+  if (action === 'sendRawTransaction') {
+    const rawTx = (req.body || {}).rawTx;
+    if (!rawTx) return res.status(400).json({ error: 'Geen rawTx' });
+
+    const body = {
+      jsonrpc: '2.0', id: 1, method: 'sendTransaction',
+      params: [rawTx, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
+    };
+    for (const url of endpoints) {
+      const d = await rpcCall(url, body);
+      if (!d) continue;
+      if (d.error) return res.status(200).json({ error: d.error });
+      if (d.result) return res.status(200).json({ signature: d.result, source: url.split('?')[0] });
+    }
+    return res.status(503).json({ error: 'Alle RPC endpoints faalden' });
+  }
+
   // ── TOKEN DECIMALS (via getTokenSupply) ──────────────────────
   if (action === 'getTokenSupply') {
     const mint = (req.body || {}).mint;
