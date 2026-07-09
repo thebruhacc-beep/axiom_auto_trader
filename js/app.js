@@ -37,7 +37,7 @@ const App = (() => {
       if (!openTrades.length) return;
       if (typeof PriceRefresher !== 'undefined') {
         await PriceRefresher.updatePositionPrices();
-        if (_currentPage === 'positions') UI.renderOpenPositions(_onClosePos);
+        if (_currentPage === 'positions') UI.renderOpenPositions(_onClosePos, _onForceClosePos);
         _refreshKPIs();
       }
     }, 15000);
@@ -95,7 +95,7 @@ const App = (() => {
           document.getElementById('sig-only-safe')?.checked ?? true
         ); break;
       case 'positions':
-        UI.renderOpenPositions(_onClosePos);
+        UI.renderOpenPositions(_onClosePos, _onForceClosePos);
         UI.renderTradeHistory(); break;
       case 'settings':
         UI.loadSettingsIntoForm(); break;
@@ -140,14 +140,14 @@ const App = (() => {
     }
     if (_currentPage === 'dashboard') _refreshDash();
     if (_currentPage === 'signals')   _loadPage('signals');
-    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
+    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos, _onForceClosePos); UI.renderTradeHistory(); }
   }
 
   function _onNewTokens(tokens, signals) {
     _allTokens  = tokens;
     _allSignals = signals;
     if (_currentPage === 'scanner')   _loadPage('scanner');
-    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos); UI.renderTradeHistory(); }
+    if (_currentPage === 'positions') { UI.renderOpenPositions(_onClosePos, _onForceClosePos); UI.renderTradeHistory(); }
     _refreshKPIs();
   }
 
@@ -156,11 +156,23 @@ const App = (() => {
     const ok = await TradeManager.manualClose(tradeId);
     if (ok) {
       UI.toast('Positie gesloten', 'success');
-      UI.renderOpenPositions(_onClosePos);
+      UI.renderOpenPositions(_onClosePos, _onForceClosePos);
       UI.renderTradeHistory();
       _refreshKPIs();
     } else {
       UI.toast('Kon positie niet sluiten', 'error');
+    }
+  }
+
+  // ── FORCE CLOSE (geen swap, alleen tracking opruimen) ──────
+  function _onForceClosePos(tradeId) {
+    const ok = TradeManager.forceClose(tradeId);
+    if (ok) {
+      UI.toast('Positie verwijderd uit tracking (geen verkoop uitgevoerd)', 'success');
+      UI.renderOpenPositions(_onClosePos, _onForceClosePos);
+      _refreshKPIs();
+    } else {
+      UI.toast('Kon positie niet vinden', 'error');
     }
   }
 
@@ -363,7 +375,7 @@ const App = (() => {
     if (_currentPage === 'dashboard')  _refreshDash();
     // Posities altijd refreshen (ook op andere pagina's) voor live PnL
     if (_currentPage === 'positions') {
-      UI.renderOpenPositions(_onClosePos);
+      UI.renderOpenPositions(_onClosePos, _onForceClosePos);
       UI.renderTradeHistory();
     }
   }

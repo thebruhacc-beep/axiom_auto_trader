@@ -294,7 +294,7 @@ const UI = (() => {
   }
 
   // ── OPEN POSITIES ─────────────────────────────────────────
-  function renderOpenPositions(onClose) {
+  function renderOpenPositions(onClose, onForceClose) {
     var grid = _el('open-positions-grid');
     if (!grid) return;
     var trades = Storage.getOpenTrades();
@@ -345,6 +345,7 @@ const UI = (() => {
         '<div class="pos-bar"><div class="pos-bar-fill" style="width:' + prog + '%;background:' + barCol + '"></div></div>' +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:4px">' +
           '<button class="btn btn--danger btn-close-pos" data-id="' + t.id + '">Sluit</button>' +
+          '<button class="btn btn-force-close" data-id="' + t.id + '" title="Verwijder uit tracking zonder te verkopen (als je hem al zelf verkocht hebt)" style="background:#444;color:#fff;font-size:11px">Force Close</button>' +
           '<a href="' + _esc(t.dexUrl || '#') + '" target="_blank" style="font-size:11px;color:var(--purple)">DEX ↗</a>' +
           '<span style="font-size:10px;color:var(--text3)">Score: ' + (t.scoreAtEntry || '?') + '</span>' +
         '</div>' +
@@ -356,6 +357,13 @@ const UI = (() => {
         if (!confirm('Positie sluiten?')) return;
         btn.disabled = true; btn.textContent = '...';
         await onClose(btn.dataset.id);
+      });
+    });
+
+    grid.querySelectorAll('.btn-force-close').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (!confirm('Force close: dit verwijdert de positie direct uit de tracking ZONDER te verkopen. Gebruik dit alleen als je de token al zelf hebt verkocht. Doorgaan?')) return;
+        if (onForceClose) onForceClose(btn.dataset.id);
       });
     });
   }

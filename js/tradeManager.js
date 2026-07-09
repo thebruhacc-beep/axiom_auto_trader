@@ -480,5 +480,23 @@ const TradeManager = (() => {
     return p.toFixed(4);
   }
 
-  return { openPaperTrade, checkPositions, manualClose, openLiveTrade };
+  // ── FORCE CLOSE ────────────────────────────────────────────
+  // Verwijdert een positie direct uit de tracking zonder ENIGE swap-poging.
+  // Voor als je de token al zelf (bv. rechtstreeks in Phantom) hebt verkocht
+  // en de app dit niet weet — voorkomt eindeloze herhaalde verkooppogingen
+  // voor een token die je niet meer bezit. Negeert PnL/fees volledig.
+  function forceClose(tradeId) {
+    _closingInProgress.delete(tradeId); // ontgrendel voor het geval hij vastzat
+    const openTrades = Storage.getOpenTrades();
+    const idx = openTrades.findIndex(t => t.id === tradeId);
+    if (idx === -1) return false;
+
+    const trade = openTrades[idx];
+    openTrades.splice(idx, 1);
+    Storage.saveOpenTrades(openTrades);
+    Storage.addLog('warning', '⛔ FORCE CLOSE: ' + trade.tokenSymbol + ' — uit tracking verwijderd zonder verkoop (PnL genegeerd)');
+    return true;
+  }
+
+  return { openPaperTrade, checkPositions, manualClose, openLiveTrade, forceClose };
 })();
