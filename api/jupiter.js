@@ -58,12 +58,12 @@ module.exports = async function handler(req, res) {
       'onlyDirectRoutes=false',
     ].join('&');
 
-    const r = await httpsRequest('quote-api.jup.ag', '/v6/quote?' + qs, 'GET');
+    const r = await httpsRequest('lite-api.jup.ag', '/swap/v1/quote?' + qs, 'GET');
     return res.status(r.status).json(r.json);
   }
 
   if (action === 'swap') {
-    const r = await httpsRequest('quote-api.jup.ag', '/v6/swap', 'POST', params);
+    const r = await httpsRequest('lite-api.jup.ag', '/swap/v1/swap', 'POST', params);
     return res.status(r.status).json(r.json);
   }
 
