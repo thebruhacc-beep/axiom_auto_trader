@@ -223,7 +223,7 @@ const Scanner = (() => {
                   const result = await Wallet.executeSwap(
                     token.address,
                     settings.tradeAmount,
-                    150 // 1.5% slippage voor memecoins
+                    1000 // 10% slippage — na herhaalde 6001 reverts
                   );
 
                   if (result && result.signature) {

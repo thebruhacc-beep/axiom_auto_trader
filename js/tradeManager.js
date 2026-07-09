@@ -19,6 +19,11 @@ const TradeManager = (() => {
   let _solPrice    = 170;
   let _solPriceAt  = 0;
 
+  // Voorkomt dat dezelfde positie 2x tegelijk verkocht wordt als
+  // checkPositions overlapt vanuit meerdere timers (app.js elke 15s +
+  // scanner.js elke scan) terwijl een vorige live-verkoop nog bezig is.
+  const _closingInProgress = new Set();
+
   async function _getSolPrice() {
     if (Date.now() - _solPriceAt < 60000) return _solPrice;
     try {
@@ -169,6 +174,10 @@ const TradeManager = (() => {
     const toClose   = [];
 
     for (const trade of openTrades) {
+      // Sla over als deze positie al bezig is met sluiten (voorkomt dubbele
+      // verkooppogingen als checkPositions overlapt vanuit meerdere timers)
+      if (_closingInProgress.has(trade.id)) continue;
+
       let current = priceMap.get(trade.tokenAddress);
       // Als geen verse prijs: gebruik laatste bekende prijs (minimaal refreshen)
       if (!current || current <= 0) {
@@ -191,12 +200,16 @@ const TradeManager = (() => {
       if (current <= trade.stopLossPrice) {
         // Live trade: voer echte sell uit via Jupiter
         if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          _closingInProgress.add(trade.id);
           Storage.addLog('warning', '🛑 LIVE STOP LOSS: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
-            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 300, true);
+            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 1000, true);
           } catch(e) {
             Storage.addLog('error', 'Live SL sell mislukt: ' + e.message);
+            _closingInProgress.delete(trade.id);
+            continue; // niet sluiten in tracking als de verkoop niet lukte
           }
+          _closingInProgress.delete(trade.id);
         }
         _executeClose(trade, current, 'CLOSED_STOPLOSS', portfolio, solPrice);
         toClose.push(trade.id);
@@ -223,13 +236,18 @@ const TradeManager = (() => {
 
         // Live trade: verkoop 50% via Jupiter
         if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          _closingInProgress.add(trade.id);
           Storage.addLog('success', '💰 LIVE TP1 (50%): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
             const halfTokens = trade.tokenAmount * 0.5;
-            await Wallet.executeSell(trade.tokenAddress, halfTokens, 6, 150, false);
+            await Wallet.executeSell(trade.tokenAddress, halfTokens, 6, 1000, false);
           } catch(e) {
             Storage.addLog('error', 'Live TP1 sell mislukt: ' + e.message);
+            trade.isPartiallyExited = false; // terugdraaien, probeer later opnieuw
+            _closingInProgress.delete(trade.id);
+            continue;
           }
+          _closingInProgress.delete(trade.id);
         }
 
         // Bereken opbrengst van 50% positie
@@ -252,13 +270,17 @@ const TradeManager = (() => {
       if (current >= trade.takeProfitPrice2 && trade.isPartiallyExited) {
         // Live trade: verkoop resterende 50% via Jupiter
         if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          _closingInProgress.add(trade.id);
           Storage.addLog('success', '🚀 LIVE TP2 (rest): ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
             const restTokens = trade.tokenAmount * 0.5;
-            await Wallet.executeSell(trade.tokenAddress, restTokens, 6, 150, true);
+            await Wallet.executeSell(trade.tokenAddress, restTokens, 6, 1000, true);
           } catch(e) {
             Storage.addLog('error', 'Live TP2 sell mislukt: ' + e.message);
+            _closingInProgress.delete(trade.id);
+            continue;
           }
+          _closingInProgress.delete(trade.id);
         }
         _executeClose(trade, current, 'CLOSED_PROFIT', portfolio, solPrice, true);
         toClose.push(trade.id);
@@ -274,12 +296,16 @@ const TradeManager = (() => {
       const holdMinutes = (Date.now() - trade.entryTime) / 60000;
       if (holdMinutes > 240 && !trade.isPartiallyExited && trade.pnlPercent < 10) {
         if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+          _closingInProgress.add(trade.id);
           Storage.addLog('info', '⏰ LIVE TIMEOUT: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
           try {
-            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 200, true);
+            await Wallet.executeSell(trade.tokenAddress, trade.tokenAmount, 6, 1000, true);
           } catch(e) {
             Storage.addLog('error', 'Live timeout sell mislukt: ' + e.message);
+            _closingInProgress.delete(trade.id);
+            continue;
           }
+          _closingInProgress.delete(trade.id);
         }
         _executeClose(trade, current, 'CLOSED_TIMEOUT', portfolio, solPrice);
         toClose.push(trade.id);
@@ -346,15 +372,22 @@ const TradeManager = (() => {
 
     // Live positie: eerst écht verkopen via Jupiter voordat we 'm sluiten
     if (!trade.isPaper && typeof Wallet !== 'undefined' && Wallet.isConnected()) {
+      if (_closingInProgress.has(trade.id)) {
+        Storage.addLog('warning', 'Deze positie wordt al verkocht, even geduld...');
+        return false;
+      }
+      _closingInProgress.add(trade.id);
       Storage.addLog('info', '❌ LIVE HANDMATIG SLUITEN: ' + trade.tokenSymbol + ' — verkoop via Jupiter...');
       try {
         const remainingFraction = trade.isPartiallyExited ? 0.5 : 1.0;
         const sellTokens = trade.tokenAmount * remainingFraction;
-        await Wallet.executeSell(trade.tokenAddress, sellTokens, 6, 200, true);
+        await Wallet.executeSell(trade.tokenAddress, sellTokens, 6, 1000, true);
       } catch(e) {
         Storage.addLog('error', 'Live handmatige sell mislukt: ' + e.message + ' — positie NIET gesloten');
+        _closingInProgress.delete(trade.id);
         return false; // niet uit tracking verwijderen als de sell mislukte
       }
+      _closingInProgress.delete(trade.id);
     }
 
     _executeClose(trade, trade.currentPrice, 'CLOSED_MANUAL', portfolio, solPrice);

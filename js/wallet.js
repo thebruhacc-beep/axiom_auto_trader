@@ -299,7 +299,7 @@ const Wallet = (() => {
       throw new Error('Read-only adres — verbind Phantom voor live trades');
     }
 
-    slippageBps = slippageBps || 100;
+    slippageBps = slippageBps || 1000; // 10% — na herhaalde slippage-reverts
     const lamports = Math.floor(amountSol * 1e9);
 
     Storage.addLog('info', '🔄 Quote ophalen: ' + amountSol + ' SOL → ' + tokenMint.slice(0,8) + '...');
@@ -338,6 +338,7 @@ const Wallet = (() => {
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
+        dynamicSlippage:           { maxBps: 1000 }, // optimaliseert slippage per token, max 10%
         prioritizationFeeLamports: {
           priorityLevelWithMaxLamports: { priorityLevel: 'medium', maxLamports: 50000 }, // max 0.00005 SOL
         },
@@ -376,7 +377,7 @@ const Wallet = (() => {
     if (stored.readOnly) throw new Error('Read-only adres — verbind Phantom');
 
     decimals    = decimals    || 6;
-    slippageBps = slippageBps || 150;
+    slippageBps = slippageBps || 1000; // 10% — na herhaalde slippage-reverts
     const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
 
     const qr = await fetch('/api/jupiter', {
@@ -404,6 +405,7 @@ const Wallet = (() => {
         userPublicKey:             _publicKey,
         wrapAndUnwrapSol:          true,
         dynamicComputeUnitLimit:   true,
+        dynamicSlippage:           { maxBps: 1000 }, // optimaliseert slippage per token, max 10%
         prioritizationFeeLamports: {
           priorityLevelWithMaxLamports: { priorityLevel: 'medium', maxLamports: 50000 }, // max 0.00005 SOL
         },
