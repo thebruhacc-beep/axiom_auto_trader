@@ -5,11 +5,16 @@
 
 export default async function handler(req, res) {
   try {
-    const { PAYPAL_CLIENT_ID, PAYPAL_SECRET, PAYPAL_ENV } = process.env;
+    // Credentials komen per request mee vanuit de browser (localStorage -> POST body),
+    // met env vars als optionele fallback voor wie dat toch liever heeft.
+    const body = req.method === 'POST' ? (req.body || {}) : {};
+    const PAYPAL_CLIENT_ID = body.client_id || process.env.PAYPAL_CLIENT_ID;
+    const PAYPAL_SECRET = body.secret || process.env.PAYPAL_SECRET;
+    const PAYPAL_ENV = body.env || process.env.PAYPAL_ENV;
 
     if (!PAYPAL_CLIENT_ID || !PAYPAL_SECRET) {
       return res.status(500).json({
-        error: 'PayPal env vars ontbreken. Zet PAYPAL_CLIENT_ID en PAYPAL_SECRET in je Vercel project settings (of .env lokaal).'
+        error: 'PayPal credentials ontbreken. Vul Client ID en Secret in bij Instellingen in het dashboard.'
       });
     }
 
@@ -33,9 +38,9 @@ export default async function handler(req, res) {
     }
 
     // Stap 2: transacties opvragen (max 31 dagen per call, PayPal limiet)
-    const end = req.query.end_date ? new Date(req.query.end_date) : new Date();
-    const start = req.query.start_date
-      ? new Date(req.query.start_date)
+    const end = body.end_date ? new Date(body.end_date) : new Date();
+    const start = body.start_date
+      ? new Date(body.start_date)
       : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const params = new URLSearchParams({
@@ -43,7 +48,7 @@ export default async function handler(req, res) {
       end_date: end.toISOString(),
       fields: 'all',
       page_size: '100',
-      page: req.query.page || '1'
+      page: body.page || '1'
     });
 
     const txRes = await fetch(`${base}/v1/reporting/transactions?${params.toString()}`, {

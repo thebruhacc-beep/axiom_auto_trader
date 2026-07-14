@@ -6,18 +6,22 @@ import crypto from 'crypto';
 
 export default async function handler(req, res) {
   try {
-    const { BYBIT_API_KEY, BYBIT_API_SECRET } = process.env;
+    // Credentials komen per request mee vanuit de browser (localStorage -> POST body),
+    // met env vars als optionele fallback.
+    const body = req.method === 'POST' ? (req.body || {}) : {};
+    const BYBIT_API_KEY = body.api_key || process.env.BYBIT_API_KEY;
+    const BYBIT_API_SECRET = body.api_secret || process.env.BYBIT_API_SECRET;
 
     if (!BYBIT_API_KEY || !BYBIT_API_SECRET) {
       return res.status(500).json({
-        error: 'Bybit env vars ontbreken. Zet BYBIT_API_KEY en BYBIT_API_SECRET in je Vercel project settings.'
+        error: 'Bybit credentials ontbreken. Vul API key en secret in bij Instellingen in het dashboard.'
       });
     }
 
     const base = 'https://api.bybit.com';
     const timestamp = Date.now().toString();
     const recvWindow = '5000';
-    const accountType = req.query.accountType || 'UNIFIED';
+    const accountType = body.accountType || 'UNIFIED';
     const queryString = `accountType=${accountType}`;
 
     // Bybit v5 signing: timestamp + api_key + recv_window + queryString, HMAC-SHA256

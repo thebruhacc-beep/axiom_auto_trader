@@ -335,6 +335,7 @@
     <button class="tab-btn" data-tab="polygon">Polygon</button>
     <button class="tab-btn" data-tab="bybit">Bybit</button>
     <button class="tab-btn" data-tab="ledger">Ledger</button>
+    <button class="tab-btn" data-tab="instellingen">Instellingen</button>
   </nav>
 
   <!-- OVERZICHT -->
@@ -418,6 +419,50 @@
     </div>
   </section>
 
+  <!-- INSTELLINGEN -->
+  <section class="panel" id="panel-instellingen">
+    <div class="card">
+      <h3>API-toegang</h3>
+      <div class="hint">
+        Deze gegevens blijven uitsluitend in de localStorage van jouw browser op dit toestel —
+        nooit in code, nooit in git, nooit op GitHub. Ze worden enkel per aanvraag meegestuurd
+        naar de serverless functie om de call uit te voeren, en daar niet bewaard.
+      </div>
+
+      <h4 style="font-family:'Fraunces',serif; font-size:15px; margin:20px 0 8px;">PayPal</h4>
+      <div class="row-input">
+        <input type="text" id="ppClientId" placeholder="Client ID" style="flex:1;">
+      </div>
+      <div class="row-input">
+        <input type="password" id="ppSecret" placeholder="Secret" style="flex:1;">
+        <button class="btn ghost small" onclick="toggleVisibility('ppSecret', this)">toon</button>
+        <select id="ppEnv" style="width:120px;">
+          <option value="live">live</option>
+          <option value="sandbox">sandbox</option>
+        </select>
+      </div>
+
+      <h4 style="font-family:'Fraunces',serif; font-size:15px; margin:20px 0 8px;">Bybit</h4>
+      <div class="row-input">
+        <input type="text" id="byKey" placeholder="API Key" style="flex:1;">
+      </div>
+      <div class="row-input">
+        <input type="password" id="bySecret" placeholder="API Secret" style="flex:1;">
+        <button class="btn ghost small" onclick="toggleVisibility('bySecret', this)">toon</button>
+      </div>
+
+      <div style="margin-top:16px; display:flex; gap:10px;">
+        <button class="btn" onclick="saveCredentials()">Opslaan</button>
+        <button class="btn ghost" onclick="clearCredentials()">Wissen</button>
+      </div>
+      <div id="credStatus" style="margin-top:12px;"></div>
+
+      <div class="hint" style="margin-top:20px;">
+        Automatisch verversen: elke <span id="intervalDisplay">15</span> seconden, voor alle bronnen waarvoor credentials zijn ingevuld (of publieke wallets).
+      </div>
+    </div>
+  </section>
+
 </div>
 
 <script>
@@ -436,9 +481,47 @@
 
   // ---------- State ----------
   const STORAGE_KEY = 'inkomsten_wallets_v1';
+  const CRED_KEY = 'inkomsten_credentials_v1';
   let wallets = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"solana":[],"polygon":[]}');
   let totals = { paypal: 0, solana: 0, polygon: 0, bybit: 0 };
   let prices = { solana: 0, matic: 0 };
+
+  // ---------- Credentials (blijven enkel in localStorage van deze browser) ----------
+  function loadCredentials() {
+    return JSON.parse(localStorage.getItem(CRED_KEY) || '{}');
+  }
+  function saveCredentials() {
+    const creds = {
+      ppClientId: document.getElementById('ppClientId').value.trim(),
+      ppSecret: document.getElementById('ppSecret').value.trim(),
+      ppEnv: document.getElementById('ppEnv').value,
+      byKey: document.getElementById('byKey').value.trim(),
+      bySecret: document.getElementById('bySecret').value.trim()
+    };
+    localStorage.setItem(CRED_KEY, JSON.stringify(creds));
+    document.getElementById('credStatus').innerHTML = '<div class="status-msg info">Opgeslagen in deze browser.</div>';
+    setTimeout(() => document.getElementById('credStatus').innerHTML = '', 2500);
+  }
+  function clearCredentials() {
+    localStorage.removeItem(CRED_KEY);
+    ['ppClientId','ppSecret','byKey','bySecret'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('credStatus').innerHTML = '<div class="status-msg info">Gewist.</div>';
+    setTimeout(() => document.getElementById('credStatus').innerHTML = '', 2500);
+  }
+  function toggleVisibility(id, btn) {
+    const el = document.getElementById(id);
+    const hidden = el.type === 'password';
+    el.type = hidden ? 'text' : 'password';
+    btn.textContent = hidden ? 'verberg' : 'toon';
+  }
+  function fillCredentialFields() {
+    const c = loadCredentials();
+    if (c.ppClientId) document.getElementById('ppClientId').value = c.ppClientId;
+    if (c.ppSecret) document.getElementById('ppSecret').value = c.ppSecret;
+    if (c.ppEnv) document.getElementById('ppEnv').value = c.ppEnv;
+    if (c.byKey) document.getElementById('byKey').value = c.byKey;
+    if (c.bySecret) document.getElementById('bySecret').value = c.bySecret;
+  }
 
   function saveWallets() { localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)); }
 
@@ -544,14 +627,23 @@
   }
 
   // ---------- PayPal ----------
-  async function fetchPaypal() {
+  async function fetchPaypal(silent) {
+    const creds = loadCredentials();
+    if (!creds.ppClientId || !creds.ppSecret) {
+      if (!silent) document.getElementById('paypalStatus').innerHTML = '<div class="status-msg error">Vul eerst je PayPal Client ID en Secret in bij Instellingen.</div>';
+      return;
+    }
     const statusEl = document.getElementById('paypalStatus');
-    statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
+    if (!silent) statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
     try {
-      const res = await fetch('/api/paypal');
+      const res = await fetch('/api/paypal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: creds.ppClientId, secret: creds.ppSecret, env: creds.ppEnv })
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : ''));
-      statusEl.innerHTML = '';
+      if (!silent) statusEl.innerHTML = '';
       const tbody = document.getElementById('paypalBody');
       const table = document.getElementById('paypalTable');
       const empty = document.getElementById('paypalEmpty');
@@ -573,19 +665,28 @@
       totals.paypal = data.transactions.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
       updateGrandTotal();
     } catch (e) {
-      statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
+      if (!silent) statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
     }
   }
 
   // ---------- Bybit ----------
-  async function fetchBybit() {
+  async function fetchBybit(silent) {
+    const creds = loadCredentials();
+    if (!creds.byKey || !creds.bySecret) {
+      if (!silent) document.getElementById('bybitStatus').innerHTML = '<div class="status-msg error">Vul eerst je Bybit API Key en Secret in bij Instellingen.</div>';
+      return;
+    }
     const statusEl = document.getElementById('bybitStatus');
-    statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
+    if (!silent) statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
     try {
-      const res = await fetch('/api/bybit');
+      const res = await fetch('/api/bybit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: creds.byKey, api_secret: creds.bySecret })
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : ''));
-      statusEl.innerHTML = '';
+      if (!silent) statusEl.innerHTML = '';
       const list = document.getElementById('bybitList');
       const account = data.list?.[0];
       if (!account) {
@@ -606,7 +707,7 @@
         `).join('')}
       `;
     } catch (e) {
-      statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
+      if (!silent) statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -620,16 +721,21 @@
     document.getElementById('bdBybit').textContent = '$' + totals.bybit.toFixed(2);
   }
 
-  async function refreshAll() {
+  async function refreshAll(silent) {
     renderWallets('solana');
     renderWallets('polygon');
-    await Promise.all([refreshChain('solana'), refreshChain('polygon'), fetchPaypal(), fetchBybit()]);
+    await Promise.all([refreshChain('solana'), refreshChain('polygon'), fetchPaypal(silent), fetchBybit(silent)]);
   }
 
   // ---------- Init ----------
+  fillCredentialFields();
   renderWallets('solana');
   renderWallets('polygon');
   updateGrandTotal();
+  refreshAll(true);
+
+  // Automatisch verversen elke 15 seconden (stil, geen foutmeldingen als credentials ontbreken)
+  setInterval(() => refreshAll(true), 15000);
 </script>
 
 </body>
