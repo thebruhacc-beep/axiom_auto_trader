@@ -34,7 +34,17 @@ export default async function handler(req, res) {
     const tokenData = await tokenRes.json();
 
     if (!tokenRes.ok) {
-      return res.status(tokenRes.status).json({ error: 'PayPal token ophalen mislukt', details: tokenData });
+      return res.status(tokenRes.status).json({
+        error: 'PayPal token ophalen mislukt',
+        details: tokenData,
+        debug: {
+          base_url_gebruikt: base,
+          environment_gebruikt: PAYPAL_ENV === 'sandbox' ? 'sandbox' : 'live',
+          client_id_start: PAYPAL_CLIENT_ID.slice(0, 6) + '…',
+          client_id_lengte: PAYPAL_CLIENT_ID.length,
+          secret_lengte: PAYPAL_SECRET.length
+        }
+      });
     }
 
     // Stap 2: transacties opvragen (max 31 dagen per call, PayPal limiet)

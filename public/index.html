@@ -642,7 +642,11 @@
         body: JSON.stringify({ client_id: creds.ppClientId, secret: creds.ppSecret, env: creds.ppEnv })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : ''));
+      if (!res.ok) {
+        let msg = data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : '');
+        if (data.debug) msg += ` | env: ${data.debug.environment_gebruikt}, client_id: ${data.debug.client_id_start} (${data.debug.client_id_lengte} tekens), secret: ${data.debug.secret_lengte} tekens`;
+        throw new Error(msg);
+      }
       if (!silent) statusEl.innerHTML = '';
       const tbody = document.getElementById('paypalBody');
       const table = document.getElementById('paypalTable');
