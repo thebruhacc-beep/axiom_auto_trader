@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grootboek — Inkomsten Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B0E11;
+    --surface: #12161C;
+    --surface-raised: #181D25;
+    --border: #232935;
+    --gold: #B8933F;
+    --gold-bright: #D4AF61;
+    --positive: #4F9D69;
+    --negative: #C1494B;
+    --text: #ECE8DD;
+    --text-muted: #8B93A0;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+  }
+
+  /* --- Signature element: gebonden ruggetje links --- */
+  .spine {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: 28px;
+    background: linear-gradient(180deg, #171B21, #0E1115);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 40px;
+    gap: 22px;
+    z-index: 10;
+  }
+  .spine .stitch {
+    width: 3px;
+    height: 14px;
+    background: var(--gold);
+    opacity: 0.35;
+    border-radius: 2px;
+  }
+
+  .app {
+    margin-left: 28px;
+    max-width: 980px;
+    padding: 40px 32px 100px;
+  }
+
+  header.masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 32px;
+  }
+  .masthead h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 34px;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .masthead .subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .masthead .date-stamp {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--gold);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: var(--radius);
+  }
+
+  /* --- Grand total --- */
+  .grand-total {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .grand-total::before {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 140px; height: 140px;
+    background: radial-gradient(circle at top right, rgba(184,147,63,0.10), transparent 70%);
+  }
+  .grand-total .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .grand-total .value {
+    font-family: 'Fraunces', serif;
+    font-size: 52px;
+    font-weight: 600;
+    color: var(--gold-bright);
+    margin: 6px 0 18px;
+    font-variant-numeric: tabular-nums;
+  }
+  .grand-total .breakdown {
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .breakdown-item {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+  .breakdown-item .k { color: var(--text-muted); margin-right: 8px; }
+  .breakdown-item .v { color: var(--text); }
+
+  /* --- Tabs --- */
+  nav.tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  nav.tabs button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    padding: 12px 18px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button.active {
+    color: var(--gold-bright);
+    border-bottom-color: var(--gold);
+  }
+
+  .panel { display: none; }
+  .panel.active { display: block; animation: fade 0.2s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-bottom: 18px;
+  }
+  .card h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .card .hint {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+  .card .hint code {
+    background: var(--surface-raised);
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--gold-bright);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+  th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td { padding: 10px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .amount-pos { color: var(--positive); }
+  .amount-neg { color: var(--negative); }
+
+  .row-input {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  input, select {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 11px;
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+  input::placeholder { color: var(--text-muted); }
+  input:focus, select:focus, button:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 1px;
+  }
+  button.btn {
+    background: var(--gold);
+    color: #14110A;
+    border: none;
+    padding: 9px 16px;
+    border-radius: var(--radius);
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button.btn:hover { background: var(--gold-bright); }
+  button.btn.ghost {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  button.btn.ghost:hover { color: var(--text); border-color: var(--gold); }
+  button.btn.small { padding: 5px 10px; font-size: 12px; }
+
+  .wallet-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .wallet-row:last-child { border-bottom: none; }
+  .wallet-row .addr {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .wallet-row .label { font-weight: 600; margin-right: 8px; }
+  .wallet-row .bal { font-family: 'IBM Plex Mono', monospace; text-align: right; }
+  .wallet-row .bal .usd { color: var(--gold-bright); display: block; font-size: 15px; }
+  .wallet-row .bal .native { color: var(--text-muted); font-size: 11.5px; }
+  .wallet-row .remove { color: var(--negative); cursor: pointer; font-size: 16px; margin-left: 14px; background:none; border:none; }
+
+  .status-msg {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+  }
+  .status-msg.error { background: rgba(193,73,75,0.12); color: #E58A8C; border: 1px solid rgba(193,73,75,0.3); }
+  .status-msg.info { background: rgba(139,147,160,0.1); color: var(--text-muted); border: 1px solid var(--border); }
+
+  .empty-state {
+    text-align: center;
+    padding: 30px 10px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .coming-soon {
+    text-align: center;
+    padding: 60px 20px;
+  }
+  .coming-soon .stamp {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--gold);
+    border: 1.5px solid var(--gold);
+    padding: 8px 16px;
+    border-radius: 2px;
+    transform: rotate(-3deg);
+    opacity: 0.8;
+  }
+  .coming-soon p { color: var(--text-muted); font-size: 13px; margin-top: 18px; max-width: 420px; margin-left: auto; margin-right: auto; }
+
+  @media (max-width: 640px) {
+    .app { padding: 24px 16px 80px; margin-left: 20px; }
+    .spine { width: 20px; }
+    .masthead { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .grand-total .value { font-size: 38px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="spine">
+  <div class="stitch"></div><div class="stitch"></div><div class="stitch"></div>
+  <div class="stitch"></div><div class="stitch"></div><div class="stitch"></div>
+  <div class="stitch"></div><div class="stitch"></div><div class="stitch"></div>
+</div>
+
+<div class="app">
+
+  <header class="masthead">
+    <div>
+      <h1>Grootboek</h1>
+      <div class="subtitle">volledig inkomstenoverzicht</div>
+    </div>
+    <div class="date-stamp" id="dateStamp"></div>
+  </header>
+
+  <div class="grand-total">
+    <div class="label">Totaal (geschat, USD)</div>
+    <div class="value" id="grandTotal">$ —</div>
+    <div class="breakdown" id="breakdownRow">
+      <div class="breakdown-item"><span class="k">PayPal</span><span class="v" id="bdPaypal">—</span></div>
+      <div class="breakdown-item"><span class="k">Solana</span><span class="v" id="bdSolana">—</span></div>
+      <div class="breakdown-item"><span class="k">Polygon</span><span class="v" id="bdPolygon">—</span></div>
+      <div class="breakdown-item"><span class="k">Bybit</span><span class="v" id="bdBybit">—</span></div>
+    </div>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="overzicht">Overzicht</button>
+    <button class="tab-btn" data-tab="paypal">PayPal</button>
+    <button class="tab-btn" data-tab="solana">Solana</button>
+    <button class="tab-btn" data-tab="polygon">Polygon</button>
+    <button class="tab-btn" data-tab="bybit">Bybit</button>
+    <button class="tab-btn" data-tab="ledger">Ledger</button>
+  </nav>
+
+  <!-- OVERZICHT -->
+  <section class="panel active" id="panel-overzicht">
+    <div class="card">
+      <h3>Hoe dit werkt</h3>
+      <div class="hint">
+        Solana- en Polygon-saldi worden rechtstreeks vanuit je browser opgehaald via publieke RPC-nodes — geen keys nodig, enkel je publieke wallet-adres.
+        PayPal en Bybit lopen via de serverless functies in <code>/api</code>: die gebruiken environment variables
+        (<code>PAYPAL_CLIENT_ID</code>, <code>PAYPAL_SECRET</code>, <code>BYBIT_API_KEY</code>, <code>BYBIT_API_SECRET</code>)
+        die je instelt in je Vercel project settings. Zie het bijgevoegde README voor de exacte stappen.
+      </div>
+      <button class="btn" onclick="refreshAll()">Alles vernieuwen</button>
+    </div>
+  </section>
+
+  <!-- PAYPAL -->
+  <section class="panel" id="panel-paypal">
+    <div class="card">
+      <h3>PayPal transacties</h3>
+      <div class="hint">Laatste 31 dagen (PayPal's limiet per call). Vereist een Business account met Transaction Search rechten.</div>
+      <div id="paypalStatus"></div>
+      <button class="btn" onclick="fetchPaypal()">Ophalen</button>
+      <div style="margin-top:16px; overflow-x:auto;">
+        <table id="paypalTable" style="display:none;">
+          <thead><tr><th>Datum</th><th>Van</th><th>Omschrijving</th><th>Status</th><th style="text-align:right">Bedrag</th></tr></thead>
+          <tbody id="paypalBody"></tbody>
+        </table>
+        <div class="empty-state" id="paypalEmpty">Nog geen data opgehaald.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SOLANA -->
+  <section class="panel" id="panel-solana">
+    <div class="card">
+      <h3>Solana wallets</h3>
+      <div class="hint">Voeg publieke Solana-adressen toe. SOL-saldo + USD-waarde via publieke RPC en CoinGecko-koers.</div>
+      <div class="row-input">
+        <input type="text" id="solLabel" placeholder="label (bv. main wallet)" style="flex:1;">
+        <input type="text" id="solAddr" placeholder="Solana adres (public key)" style="flex:2;">
+        <button class="btn" onclick="addWallet('solana')">Toevoegen</button>
+      </div>
+      <div id="solanaList"></div>
+    </div>
+  </section>
+
+  <!-- POLYGON -->
+  <section class="panel" id="panel-polygon">
+    <div class="card">
+      <h3>Polygon wallets</h3>
+      <div class="hint">Voeg publieke Polygon (MATIC/POL) adressen toe. Native saldo via publieke RPC.</div>
+      <div class="row-input">
+        <input type="text" id="polyLabel" placeholder="label (bv. cold wallet)" style="flex:1;">
+        <input type="text" id="polyAddr" placeholder="0x... adres" style="flex:2;">
+        <button class="btn" onclick="addWallet('polygon')">Toevoegen</button>
+      </div>
+      <div id="polygonList"></div>
+    </div>
+  </section>
+
+  <!-- BYBIT -->
+  <section class="panel" id="panel-bybit">
+    <div class="card">
+      <h3>Bybit</h3>
+      <div class="hint">Unified Trading Account saldo, via serverless proxy (<code>/api/bybit</code>). API key nodig met minstens "read" rechten op account info.</div>
+      <div id="bybitStatus"></div>
+      <button class="btn" onclick="fetchBybit()">Ophalen</button>
+      <div id="bybitList" style="margin-top:16px;"></div>
+    </div>
+  </section>
+
+  <!-- LEDGER -->
+  <section class="panel" id="panel-ledger">
+    <div class="card">
+      <div class="coming-soon">
+        <span class="stamp">Binnenkort</span>
+        <p>Ledger cold storage-integratie komt hier. Adressen die je via je Ledger beheert kan je trouwens nu al toevoegen
+        onder Solana / Polygon als publiek adres — enkel het rechtstreeks verbinden met het apparaat (WebUSB/WebHID) volgt later.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // ---------- Tabs ----------
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---------- Datestamp ----------
+  document.getElementById('dateStamp').textContent = new Date().toLocaleDateString('nl-BE', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // ---------- State ----------
+  const STORAGE_KEY = 'inkomsten_wallets_v1';
+  let wallets = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"solana":[],"polygon":[]}');
+  let totals = { paypal: 0, solana: 0, polygon: 0, bybit: 0 };
+  let prices = { solana: 0, matic: 0 };
+
+  function saveWallets() { localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets)); }
+
+  function addWallet(chain) {
+    const labelEl = document.getElementById(chain === 'solana' ? 'solLabel' : 'polyLabel');
+    const addrEl = document.getElementById(chain === 'solana' ? 'solAddr' : 'polyAddr');
+    const label = labelEl.value.trim() || (chain === 'solana' ? 'Solana wallet' : 'Polygon wallet');
+    const address = addrEl.value.trim();
+    if (!address) return;
+    wallets[chain].push({ id: crypto.randomUUID(), label, address, balance: null, usd: null });
+    labelEl.value = ''; addrEl.value = '';
+    saveWallets();
+    renderWallets(chain);
+    refreshChain(chain);
+  }
+
+  function removeWallet(chain, id) {
+    wallets[chain] = wallets[chain].filter(w => w.id !== id);
+    saveWallets();
+    renderWallets(chain);
+    recomputeChainTotal(chain);
+  }
+
+  function renderWallets(chain) {
+    const container = document.getElementById(chain + 'List');
+    const list = wallets[chain];
+    if (!list.length) {
+      container.innerHTML = '<div class="empty-state">Nog geen wallets toegevoegd.</div>';
+      return;
+    }
+    container.innerHTML = list.map(w => `
+      <div class="wallet-row">
+        <div>
+          <span class="label">${escapeHtml(w.label)}</span>
+          <div class="addr">${escapeHtml(shortAddr(w.address))}</div>
+        </div>
+        <div class="bal">
+          <span class="usd">${w.usd !== null ? '$' + w.usd.toFixed(2) : '—'}</span>
+          <span class="native">${w.balance !== null ? w.balance.toFixed(4) + (chain === 'solana' ? ' SOL' : ' MATIC') : 'nog niet opgehaald'}</span>
+        </div>
+        <button class="remove" onclick="removeWallet('${chain}','${w.id}')" title="verwijderen">×</button>
+      </div>
+    `).join('');
+  }
+
+  function shortAddr(a) { return a.length > 16 ? a.slice(0,6) + '…' + a.slice(-6) : a; }
+  function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // ---------- Prijzen ----------
+  async function fetchPrices() {
+    try {
+      const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana,matic-network&vs_currencies=usd');
+      const d = await r.json();
+      prices.solana = d.solana?.usd || 0;
+      prices.matic = d['matic-network']?.usd || 0;
+    } catch (e) { console.warn('Prijzen ophalen mislukt', e); }
+  }
+
+  // ---------- Solana ----------
+  async function fetchSolanaBalance(address) {
+    const res = await fetch('https://api.mainnet-beta.solana.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address] })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.result.value / 1e9; // lamports -> SOL
+  }
+
+  // ---------- Polygon ----------
+  async function fetchPolygonBalance(address) {
+    const res = await fetch('https://polygon-rpc.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return parseInt(data.result, 16) / 1e18; // wei -> MATIC
+  }
+
+  async function refreshChain(chain) {
+    await fetchPrices();
+    const list = wallets[chain];
+    for (const w of list) {
+      try {
+        const bal = chain === 'solana' ? await fetchSolanaBalance(w.address) : await fetchPolygonBalance(w.address);
+        w.balance = bal;
+        w.usd = bal * (chain === 'solana' ? prices.solana : prices.matic);
+      } catch (e) {
+        console.warn(chain, w.address, e.message);
+      }
+    }
+    saveWallets();
+    renderWallets(chain);
+    recomputeChainTotal(chain);
+  }
+
+  function recomputeChainTotal(chain) {
+    totals[chain] = wallets[chain].reduce((sum, w) => sum + (w.usd || 0), 0);
+    updateGrandTotal();
+  }
+
+  // ---------- PayPal ----------
+  async function fetchPaypal() {
+    const statusEl = document.getElementById('paypalStatus');
+    statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
+    try {
+      const res = await fetch('/api/paypal');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : ''));
+      statusEl.innerHTML = '';
+      const tbody = document.getElementById('paypalBody');
+      const table = document.getElementById('paypalTable');
+      const empty = document.getElementById('paypalEmpty');
+      if (!data.transactions.length) {
+        table.style.display = 'none'; empty.style.display = 'block';
+        empty.textContent = 'Geen transacties gevonden in deze periode.';
+      } else {
+        table.style.display = 'table'; empty.style.display = 'none';
+        tbody.innerHTML = data.transactions.map(t => `
+          <tr>
+            <td>${new Date(t.date).toLocaleDateString('nl-BE')}</td>
+            <td>${escapeHtml(t.payer || '—')}</td>
+            <td>${escapeHtml(t.note || '—')}</td>
+            <td>${escapeHtml(t.status || '—')}</td>
+            <td style="text-align:right" class="${parseFloat(t.amount) >= 0 ? 'amount-pos' : 'amount-neg'}">${t.amount} ${t.currency}</td>
+          </tr>
+        `).join('');
+      }
+      totals.paypal = data.transactions.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+      updateGrandTotal();
+    } catch (e) {
+      statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ---------- Bybit ----------
+  async function fetchBybit() {
+    const statusEl = document.getElementById('bybitStatus');
+    statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
+    try {
+      const res = await fetch('/api/bybit');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error + (data.details ? ' — ' + JSON.stringify(data.details).slice(0,200) : ''));
+      statusEl.innerHTML = '';
+      const list = document.getElementById('bybitList');
+      const account = data.list?.[0];
+      if (!account) {
+        list.innerHTML = '<div class="empty-state">Geen accountdata gevonden.</div>';
+        return;
+      }
+      const usdTotal = parseFloat(account.totalEquity || 0);
+      totals.bybit = usdTotal;
+      updateGrandTotal();
+      const coins = (account.coin || []).filter(c => parseFloat(c.walletBalance) > 0);
+      list.innerHTML = `
+        <div class="wallet-row"><span class="label">Totaal (equity)</span><span class="bal"><span class="usd">$${usdTotal.toFixed(2)}</span></span></div>
+        ${coins.map(c => `
+          <div class="wallet-row">
+            <span class="addr">${c.coin}</span>
+            <span class="bal"><span class="native">${parseFloat(c.walletBalance).toFixed(4)}</span></span>
+          </div>
+        `).join('')}
+      `;
+    } catch (e) {
+      statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ---------- Grand total ----------
+  function updateGrandTotal() {
+    const grand = totals.paypal + totals.solana + totals.polygon + totals.bybit;
+    document.getElementById('grandTotal').textContent = '$ ' + grand.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('bdPaypal').textContent = '$' + totals.paypal.toFixed(2);
+    document.getElementById('bdSolana').textContent = '$' + totals.solana.toFixed(2);
+    document.getElementById('bdPolygon').textContent = '$' + totals.polygon.toFixed(2);
+    document.getElementById('bdBybit').textContent = '$' + totals.bybit.toFixed(2);
+  }
+
+  async function refreshAll() {
+    renderWallets('solana');
+    renderWallets('polygon');
+    await Promise.all([refreshChain('solana'), refreshChain('polygon'), fetchPaypal(), fetchBybit()]);
+  }
+
+  // ---------- Init ----------
+  renderWallets('solana');
+  renderWallets('polygon');
+  updateGrandTotal();
+</script>
+
+</body>
+</html>
