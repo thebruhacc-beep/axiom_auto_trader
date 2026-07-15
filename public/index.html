@@ -291,6 +291,41 @@
   }
   .coming-soon p { color: var(--text-muted); font-size: 13px; margin-top: 18px; max-width: 420px; margin-left: auto; margin-right: auto; }
 
+  /* --- Stat grid (Overzicht) --- */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin: 18px 0 4px;
+  }
+  .stat-box {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 16px;
+  }
+  .stat-box.highlight {
+    border-color: var(--gold);
+    background: linear-gradient(180deg, rgba(184,147,63,0.08), transparent);
+  }
+  .stat-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--gold-bright);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wallet-row .error { color: var(--negative); font-size: 11px; display: block; margin-top: 2px; }
+
   @media (max-width: 640px) {
     .app { padding: 24px 16px 80px; margin-left: 20px; }
     .spine { width: 20px; }
@@ -341,13 +376,20 @@
   <!-- OVERZICHT -->
   <section class="panel active" id="panel-overzicht">
     <div class="card">
-      <h3>Hoe dit werkt</h3>
+      <h3>Inkomen per periode</h3>
       <div class="hint">
-        Solana- en Polygon-saldi worden rechtstreeks vanuit je browser opgehaald via publieke RPC-nodes — geen keys nodig, enkel je publieke wallet-adres.
-        PayPal en Bybit lopen via de serverless functies in <code>/api</code>: die gebruiken environment variables
-        (<code>PAYPAL_CLIENT_ID</code>, <code>PAYPAL_SECRET</code>, <code>BYBIT_API_KEY</code>, <code>BYBIT_API_SECRET</code>)
-        die je instelt in je Vercel project settings. Zie het bijgevoegde README voor de exacte stappen.
+        PayPal-bedragen zijn echte transactiesommen per periode. Voor Solana, Polygon en Bybit
+        tonen we het huidige saldo (geen historische in/uitstroom per periode beschikbaar zonder
+        blockchain-transactie-analyse) — die tellen daarom enkel mee in de kolom "Totaal".
       </div>
+      <div class="stat-grid" id="statGrid">
+        <div class="stat-box"><div class="stat-label">Vandaag</div><div class="stat-value" id="statDag">$0.00</div></div>
+        <div class="stat-box"><div class="stat-label">Deze week</div><div class="stat-value" id="statWeek">$0.00</div></div>
+        <div class="stat-box"><div class="stat-label">Deze maand</div><div class="stat-value" id="statMaand">$0.00</div></div>
+        <div class="stat-box"><div class="stat-label">Dit jaar</div><div class="stat-value" id="statJaar">$0.00</div></div>
+        <div class="stat-box highlight"><div class="stat-label">Totaal (huidig)</div><div class="stat-value" id="statTotaal">$0.00</div></div>
+      </div>
+      <div class="hint" style="margin-top:14px;" id="overzichtMeta">Nog geen PayPal-data opgehaald — ga naar het PayPal-tabblad en haal minstens "Deze maand" op voor een volledig overzicht.</div>
       <button class="btn" onclick="refreshAll()">Alles vernieuwen</button>
     </div>
   </section>
@@ -356,9 +398,12 @@
   <section class="panel" id="panel-paypal">
     <div class="card">
       <h3>PayPal transacties</h3>
-      <div class="hint">Laatste 31 dagen (PayPal's limiet per call). Vereist een Business account met Transaction Search rechten.</div>
+      <div class="hint">Kies "Deze maand" voor een snelle check, of "Alles" om je volledige historiek (tot 3 jaar terug, PayPal's bewaarlimiet) op te halen — dat gebeurt in stukken van 31 dagen en kan even duren.</div>
       <div id="paypalStatus"></div>
-      <button class="btn" onclick="fetchPaypal()">Ophalen</button>
+      <div class="row-input">
+        <button class="btn" onclick="fetchPaypal(false, 'month')">Deze maand</button>
+        <button class="btn ghost" onclick="fetchPaypal(false, 'all')">Alles (tot 3 jaar)</button>
+      </div>
       <div style="margin-top:16px; overflow-x:auto;">
         <table id="paypalTable" style="display:none;">
           <thead><tr><th>Datum</th><th>Van</th><th>Omschrijving</th><th>Status</th><th style="text-align:right">Bedrag</th></tr></thead>
@@ -378,6 +423,7 @@
         <input type="text" id="solLabel" placeholder="label (bv. main wallet)" style="flex:1;">
         <input type="text" id="solAddr" placeholder="Solana adres (public key)" style="flex:2;">
         <button class="btn" onclick="addWallet('solana')">Toevoegen</button>
+        <button class="btn ghost" onclick="refreshChain('solana', false)">Vernieuwen</button>
       </div>
       <div id="solanaList"></div>
     </div>
@@ -392,6 +438,7 @@
         <input type="text" id="polyLabel" placeholder="label (bv. cold wallet)" style="flex:1;">
         <input type="text" id="polyAddr" placeholder="0x... adres" style="flex:2;">
         <button class="btn" onclick="addWallet('polygon')">Toevoegen</button>
+        <button class="btn ghost" onclick="refreshChain('polygon', false)">Vernieuwen</button>
       </div>
       <div id="polygonList"></div>
     </div>
@@ -403,7 +450,7 @@
       <h3>Bybit</h3>
       <div class="hint">Unified Trading Account saldo, via serverless proxy (<code>/api/bybit</code>). API key nodig met minstens "read" rechten op account info.</div>
       <div id="bybitStatus"></div>
-      <button class="btn" onclick="fetchBybit()">Ophalen</button>
+      <button class="btn" onclick="fetchBybit(false)">Ophalen</button>
       <div id="bybitList" style="margin-top:16px;"></div>
     </div>
   </section>
@@ -535,7 +582,7 @@
     labelEl.value = ''; addrEl.value = '';
     saveWallets();
     renderWallets(chain);
-    refreshChain(chain);
+    refreshChain(chain, false);
   }
 
   function removeWallet(chain, id) {
@@ -557,6 +604,7 @@
         <div>
           <span class="label">${escapeHtml(w.label)}</span>
           <div class="addr">${escapeHtml(shortAddr(w.address))}</div>
+          ${w.error ? `<span class="error">Fout: ${escapeHtml(w.error)}</span>` : ''}
         </div>
         <div class="bal">
           <span class="usd">${w.usd !== null ? '$' + w.usd.toFixed(2) : '—'}</span>
@@ -582,11 +630,12 @@
 
   // ---------- Solana ----------
   async function fetchSolanaBalance(address) {
-    const res = await fetch('https://api.mainnet-beta.solana.com', {
+    const res = await fetch('https://solana-rpc.publicnode.com', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address] })
     });
+    if (!res.ok) throw new Error('RPC fout (' + res.status + ')');
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     return data.result.value / 1e9; // lamports -> SOL
@@ -594,17 +643,18 @@
 
   // ---------- Polygon ----------
   async function fetchPolygonBalance(address) {
-    const res = await fetch('https://polygon-rpc.com', {
+    const res = await fetch('https://polygon-bor-rpc.publicnode.com', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] })
     });
+    if (!res.ok) throw new Error('RPC fout (' + res.status + ')');
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     return parseInt(data.result, 16) / 1e18; // wei -> MATIC
   }
 
-  async function refreshChain(chain) {
+  async function refreshChain(chain, silent) {
     await fetchPrices();
     const list = wallets[chain];
     for (const w of list) {
@@ -612,8 +662,10 @@
         const bal = chain === 'solana' ? await fetchSolanaBalance(w.address) : await fetchPolygonBalance(w.address);
         w.balance = bal;
         w.usd = bal * (chain === 'solana' ? prices.solana : prices.matic);
+        w.error = null;
       } catch (e) {
-        console.warn(chain, w.address, e.message);
+        w.error = e.message;
+        if (!silent) console.warn(chain, w.address, e.message);
       }
     }
     saveWallets();
@@ -623,23 +675,72 @@
 
   function recomputeChainTotal(chain) {
     totals[chain] = wallets[chain].reduce((sum, w) => sum + (w.usd || 0), 0);
+    computeOverview();
+  }
+
+  // ---------- Periode-overzicht ----------
+  function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+  function startOfWeek(d) { const x = startOfDay(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x; } // maandag als start
+  function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function startOfYear(d) { return new Date(d.getFullYear(), 0, 1); }
+
+  function computeOverview() {
+    const txs = loadPaypalCache();
+    const now = new Date();
+    const dayStart = startOfDay(now), weekStart = startOfWeek(now), monthStart = startOfMonth(now), yearStart = startOfYear(now);
+    let dag = 0, week = 0, maand = 0, jaar = 0, totaalPP = 0;
+    txs.forEach(t => {
+      const amt = parseFloat(t.amount) || 0;
+      const d = new Date(t.date);
+      totaalPP += amt;
+      if (d >= dayStart) dag += amt;
+      if (d >= weekStart) week += amt;
+      if (d >= monthStart) maand += amt;
+      if (d >= yearStart) jaar += amt;
+    });
+    totals.paypal = totaalPP;
+    const cryptoBybit = totals.solana + totals.polygon + totals.bybit;
+    document.getElementById('statDag').textContent = '$' + dag.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statWeek').textContent = '$' + week.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statMaand').textContent = '$' + maand.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statJaar').textContent = '$' + jaar.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statTotaal').textContent = '$' + (totaalPP + cryptoBybit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const meta = document.getElementById('overzichtMeta');
+    if (txs.length) {
+      meta.textContent = `Gebaseerd op ${txs.length} PayPal-transacties in cache (klik "Alles" op het PayPal-tabblad voor de volledige historiek), plus het huidige saldo van je crypto wallets en Bybit.`;
+    }
     updateGrandTotal();
   }
 
   // ---------- PayPal ----------
-  async function fetchPaypal(silent) {
-    const creds = loadCredentials();
-    if (!creds.ppClientId || !creds.ppSecret) {
-      if (!silent) document.getElementById('paypalStatus').innerHTML = '<div class="status-msg error">Vul eerst je PayPal Client ID en Secret in bij Instellingen.</div>';
-      return;
-    }
-    const statusEl = document.getElementById('paypalStatus');
-    if (!silent) statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
-    try {
+  const PAYPAL_TX_CACHE_KEY = 'inkomsten_paypal_tx_v1';
+
+  function loadPaypalCache() {
+    try { return JSON.parse(localStorage.getItem(PAYPAL_TX_CACHE_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function savePaypalCache(txs) {
+    localStorage.setItem(PAYPAL_TX_CACHE_KEY, JSON.stringify(txs));
+  }
+  function mergePaypalCache(newTxs) {
+    const cache = loadPaypalCache();
+    const byId = new Map(cache.map(t => [t.id, t]));
+    newTxs.forEach(t => byId.set(t.id, t));
+    const merged = Array.from(byId.values());
+    savePaypalCache(merged);
+    return merged;
+  }
+
+  async function fetchPaypalChunk(creds, startDate, endDate) {
+    let all = [];
+    let page = 1;
+    while (page <= 5) {
       const res = await fetch('/api/paypal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: creds.ppClientId, secret: creds.ppSecret, env: creds.ppEnv })
+        body: JSON.stringify({
+          client_id: creds.ppClientId, secret: creds.ppSecret, env: creds.ppEnv,
+          start_date: startDate.toISOString(), end_date: endDate.toISOString(), page: String(page)
+        })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -647,29 +748,76 @@
         if (data.debug) msg += ` | env: ${data.debug.environment_gebruikt}, client_id: ${data.debug.client_id_start} (${data.debug.client_id_lengte} tekens), secret: ${data.debug.secret_lengte} tekens`;
         throw new Error(msg);
       }
-      if (!silent) statusEl.innerHTML = '';
-      const tbody = document.getElementById('paypalBody');
-      const table = document.getElementById('paypalTable');
-      const empty = document.getElementById('paypalEmpty');
-      if (!data.transactions.length) {
-        table.style.display = 'none'; empty.style.display = 'block';
-        empty.textContent = 'Geen transacties gevonden in deze periode.';
+      all = all.concat(data.transactions);
+      if (page >= (data.total_pages || 1)) break;
+      page++;
+    }
+    return all;
+  }
+
+  async function fetchPaypal(silent, mode) {
+    mode = mode || 'month';
+    const creds = loadCredentials();
+    if (!creds.ppClientId || !creds.ppSecret) {
+      if (!silent) document.getElementById('paypalStatus').innerHTML = '<div class="status-msg error">Vul eerst je PayPal Client ID en Secret in bij Instellingen.</div>';
+      return;
+    }
+    const statusEl = document.getElementById('paypalStatus');
+    try {
+      let allNewTx = [];
+      if (mode === 'month') {
+        if (!silent) statusEl.innerHTML = '<div class="status-msg info">Bezig met ophalen…</div>';
+        const end = new Date();
+        const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+        allNewTx = await fetchPaypalChunk(creds, start, end);
       } else {
-        table.style.display = 'table'; empty.style.display = 'none';
-        tbody.innerHTML = data.transactions.map(t => `
-          <tr>
-            <td>${new Date(t.date).toLocaleDateString('nl-BE')}</td>
-            <td>${escapeHtml(t.payer || '—')}</td>
-            <td>${escapeHtml(t.note || '—')}</td>
-            <td>${escapeHtml(t.status || '—')}</td>
-            <td style="text-align:right" class="${parseFloat(t.amount) >= 0 ? 'amount-pos' : 'amount-neg'}">${t.amount} ${t.currency}</td>
-          </tr>
-        `).join('');
+        // 'all': chunks van 31 dagen tot 3 jaar terug (PayPal's bewaarlimiet)
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 3);
+        const chunks = [];
+        let end = new Date();
+        while (end > cutoff) {
+          const start = new Date(Math.max(cutoff.getTime(), end.getTime() - 30 * 24 * 60 * 60 * 1000));
+          chunks.push([start, end]);
+          end = new Date(start.getTime() - 1000);
+        }
+        for (let i = 0; i < chunks.length; i++) {
+          if (!silent) statusEl.innerHTML = `<div class="status-msg info">Periode ${i + 1} van ${chunks.length} ophalen…</div>`;
+          const tx = await fetchPaypalChunk(creds, chunks[i][0], chunks[i][1]);
+          allNewTx = allNewTx.concat(tx);
+        }
       }
-      totals.paypal = data.transactions.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
-      updateGrandTotal();
+      const merged = mergePaypalCache(allNewTx);
+      if (!silent) statusEl.innerHTML = `<div class="status-msg info">${merged.length} transacties in cache (${allNewTx.length} nieuw/bijgewerkt bij deze ophaling).</div>`;
+      renderPaypalTable(merged);
+      computeOverview();
     } catch (e) {
       if (!silent) statusEl.innerHTML = `<div class="status-msg error">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderPaypalTable(txs) {
+    const tbody = document.getElementById('paypalBody');
+    const table = document.getElementById('paypalTable');
+    const empty = document.getElementById('paypalEmpty');
+    const sorted = [...txs].sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (!sorted.length) {
+      table.style.display = 'none'; empty.style.display = 'block';
+      empty.textContent = 'Geen transacties gevonden.';
+      return;
+    }
+    table.style.display = 'table'; empty.style.display = 'none';
+    tbody.innerHTML = sorted.slice(0, 300).map(t => `
+      <tr>
+        <td>${new Date(t.date).toLocaleDateString('nl-BE')}</td>
+        <td>${escapeHtml(t.payer || '—')}</td>
+        <td>${escapeHtml(t.note || '—')}</td>
+        <td>${escapeHtml(t.status || '—')}</td>
+        <td style="text-align:right" class="${parseFloat(t.amount) >= 0 ? 'amount-pos' : 'amount-neg'}">${t.amount} ${t.currency}</td>
+      </tr>
+    `).join('');
+    if (sorted.length > 300) {
+      tbody.innerHTML += `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">… en ${sorted.length - 300} meer (tellen wel mee in de totalen)</td></tr>`;
     }
   }
 
@@ -699,7 +847,7 @@
       }
       const usdTotal = parseFloat(account.totalEquity || 0);
       totals.bybit = usdTotal;
-      updateGrandTotal();
+      computeOverview();
       const coins = (account.coin || []).filter(c => parseFloat(c.walletBalance) > 0);
       list.innerHTML = `
         <div class="wallet-row"><span class="label">Totaal (equity)</span><span class="bal"><span class="usd">$${usdTotal.toFixed(2)}</span></span></div>
@@ -728,17 +876,19 @@
   async function refreshAll(silent) {
     renderWallets('solana');
     renderWallets('polygon');
-    await Promise.all([refreshChain('solana'), refreshChain('polygon'), fetchPaypal(silent), fetchBybit(silent)]);
+    await Promise.all([refreshChain('solana', silent), refreshChain('polygon', silent), fetchPaypal(silent, 'month'), fetchBybit(silent)]);
   }
 
   // ---------- Init ----------
   fillCredentialFields();
   renderWallets('solana');
   renderWallets('polygon');
-  updateGrandTotal();
+  renderPaypalTable(loadPaypalCache());
+  computeOverview();
   refreshAll(true);
 
   // Automatisch verversen elke 15 seconden (stil, geen foutmeldingen als credentials ontbreken)
+  // Let op: gebruikt "maand"-modus voor PayPal, niet "alles" (dat blijf je handmatig doen via de knop)
   setInterval(() => refreshAll(true), 15000);
 </script>
 
