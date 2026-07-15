@@ -799,8 +799,18 @@
         }
         for (let i = 0; i < chunks.length; i++) {
           if (!silent) statusEl.innerHTML = `<div class="status-msg info">Periode ${i + 1} van ${chunks.length} ophalen…</div>`;
-          const tx = await fetchPaypalChunk(creds, chunks[i][0], chunks[i][1]);
-          allNewTx = allNewTx.concat(tx);
+          try {
+            const tx = await fetchPaypalChunk(creds, chunks[i][0], chunks[i][1]);
+            allNewTx = allNewTx.concat(tx);
+          } catch (e) {
+            // PayPal staat vanaf hier waarschijnlijk geen oudere data toe voor dit account.
+            // Stop hier netjes, maar bewaar alles wat tot nu toe wél gelukt is.
+            const merged = mergePaypalCache(allNewTx);
+            renderPaypalTable(merged);
+            computeOverview();
+            if (!silent) statusEl.innerHTML = `<div class="status-msg info">Gestopt bij periode ${i + 1}/${chunks.length} — PayPal staat vanaf dit punt geen oudere transacties toe voor jouw account. Data tot dan is bewaard (${merged.length} transacties totaal).</div>`;
+            return;
+          }
         }
       }
       const merged = mergePaypalCache(allNewTx);
