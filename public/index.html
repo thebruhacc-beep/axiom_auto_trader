@@ -642,16 +642,32 @@
   }
 
   // ---------- Polygon ----------
+  const POLYGON_RPC_ENDPOINTS = [
+    'https://polygon-bor-rpc.publicnode.com',
+    'https://rpc.ankr.com/polygon',
+    'https://1rpc.io/matic',
+    'https://polygon-rpc.com'
+  ];
+
   async function fetchPolygonBalance(address) {
-    const res = await fetch('https://polygon-bor-rpc.publicnode.com', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] })
-    });
-    if (!res.ok) throw new Error('RPC fout (' + res.status + ')');
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return parseInt(data.result, 16) / 1e18; // wei -> MATIC
+    let lastError;
+    for (const endpoint of POLYGON_RPC_ENDPOINTS) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] })
+        });
+        if (!res.ok) throw new Error('RPC fout (' + res.status + ') via ' + endpoint);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        return parseInt(data.result, 16) / 1e18; // wei -> MATIC
+      } catch (e) {
+        lastError = e;
+        // probeer de volgende endpoint
+      }
+    }
+    throw new Error('Alle RPC-providers faalden — laatste fout: ' + (lastError?.message || 'onbekend'));
   }
 
   async function refreshChain(chain, silent) {

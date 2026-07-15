@@ -53,9 +53,13 @@ export default async function handler(req, res) {
       ? new Date(body.start_date)
       : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
+    // PayPal accepteert geen milliseconden en is strikt over het formaat:
+    // verwacht bv. 2023-07-15T15:30:15+0000, niet de standaard .toISOString() met ".123Z"
+    const toPaypalDate = (d) => d.toISOString().split('.')[0] + '+0000';
+
     const params = new URLSearchParams({
-      start_date: start.toISOString(),
-      end_date: end.toISOString(),
+      start_date: toPaypalDate(start),
+      end_date: toPaypalDate(end),
       fields: 'all',
       page_size: '100',
       page: body.page || '1'
